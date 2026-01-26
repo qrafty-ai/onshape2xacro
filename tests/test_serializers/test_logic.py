@@ -1,4 +1,3 @@
-import pytest
 from onshape2xacro.serializers import is_joint, get_joint_name, is_module_boundary
 
 

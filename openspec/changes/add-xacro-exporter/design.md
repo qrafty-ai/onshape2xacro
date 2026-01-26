@@ -33,7 +33,7 @@ We're building a CLI tool that bridges Onshape CAD assemblies to ROS2 xacro file
 ### Decision 1: Extend URDFSerializer Pattern
 **Choice**: Create XacroSerializer following onshape-robotics-toolkit's RobotSerializer pattern
 
-**Why**: 
+**Why**:
 - Consistent with library architecture
 - Reuses Robot model traversal logic
 - Link/Joint to_xml() methods already generate valid URDF elements
@@ -146,7 +146,7 @@ class ExportConfig:
 │  output/                                                         │
    |-- robot.urdf.xacro # entry point
 │  ├── modules/                                                       │
-       |-- 
+       |--
 │  │   ├── arm/arm.xacro        # Module macro                    │
 │  │   └── gripper/gripper.xacro                                  │
 │  ├── meshes/                                                     │

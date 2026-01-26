@@ -1,5 +1,5 @@
 import pytest
-from onshape2xacro.serializers import sanitize_name, XacroSerializer
+from onshape2xacro.serializers import sanitize_name
 
 
 def test_sanitize_name():

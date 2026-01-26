@@ -1,7 +1,7 @@
 import re
 import os
 import asyncio
-from typing import Any, TYPE_CHECKING, Dict, List, Set, Optional, Tuple
+from typing import Any, TYPE_CHECKING, Dict, List
 from pathlib import Path
 from lxml import etree as ET
 from loguru import logger
@@ -39,6 +39,20 @@ def sanitize_name(name: str) -> str:
     if not s:
         s = "_"
     return s
+
+
+def is_module_boundary(graph) -> bool:
+    """
+    Check if a kinematic graph (representing a subassembly)
+    should be treated as a xacro module boundary.
+
+    Rule: Boundary if it contains any edges with 'joint_' prefix.
+    """
+    for edge in graph.edges:
+        name = getattr(edge, "name", str(edge))
+        if is_joint(name):
+            return True
+    return False
 
 
 class XacroSerializer(RobotSerializer):

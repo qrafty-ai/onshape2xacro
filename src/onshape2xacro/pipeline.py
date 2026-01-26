@@ -1,6 +1,4 @@
 import os
-from pathlib import Path
-from typing import Optional, Union
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
 from onshape_robotics_toolkit.robot import Robot
 from onshape2xacro.serializers import XacroSerializer

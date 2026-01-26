@@ -39,7 +39,6 @@ def test_cli_parsing_basic(monkeypatch):
 
 def test_cli_parsing_full(monkeypatch):
     import sys
-    from onshape2xacro.cli import parse_args
 
     test_args = [
         "onshape2xacro",
@@ -96,7 +95,7 @@ def test_cli_version(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", test_args)
 
     # We expect this to fail/exit for now until implemented
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(SystemExit):
         main()
     out, err = capsys.readouterr()
     # Placeholder for version check

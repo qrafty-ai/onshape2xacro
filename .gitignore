@@ -1,10 +1,27 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+# Environments
+.env
+.venv/
+env/
+venv/
+.python-version
 
-# Virtual environments
-.venv
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Package
+dist/
+build/
+*.egg-info/
+uv.lock
+
+# Project specific
+ORT.log
+ORT.yaml
+*.png
+manual_test/
+output_test/
+sample_xacros/
+test_tyro.py
+assembly_check.png

@@ -1,6 +1,5 @@
 import os
 import pytest
-from pathlib import Path
 from onshape2xacro.pipeline import run_export
 from onshape2xacro.cli import ExportConfig
 

@@ -48,7 +48,7 @@ joint_limits:
     upper: 3.14
     velocity: 1.5
     effort: 100
-    
+
 inertials:
   link1:
     mass: 5.0
@@ -56,7 +56,7 @@ inertials:
       ixx: 0.1
       iyy: 0.1
       izz: 0.1
-      
+
 dynamics:
   elbow:
     friction: 0.1

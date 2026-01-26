@@ -1,6 +1,6 @@
 import importlib.metadata
 import sys
-from typing import Union, Annotated
+from typing import Union
 from dataclasses import dataclass
 from pathlib import Path
 import tyro
