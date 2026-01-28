@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass
 from typing import List, Any, Dict, Iterable, Tuple, cast
 from collections.abc import Iterable as IterableABC
@@ -11,6 +12,7 @@ class LinkRecord:
     part_ids: List[str]
     occurrences: List[List[str]]
     part_names: List[str]
+    keys: List[Any]
     parent: Any = None
 
 
@@ -162,6 +164,10 @@ class CondensedRobot(Robot):
                 list(set(sanitize_name(n) for n in part_names if n))
             )
             link_name = "_".join(sanitized_names)
+            if len(link_name) > 128:
+                h = hashlib.md5(link_name.encode()).hexdigest()[:8]
+                link_name = f"{link_name[:119]}_{h}"
+
             if not link_name:
                 link_name = f"link_{len(used_names)}"
 
@@ -187,6 +193,7 @@ class CondensedRobot(Robot):
                 part_ids=part_ids,
                 occurrences=occurrences,
                 part_names=part_names,
+                keys=group_nodes,
                 parent=parent,
                 name=link_name,
             )

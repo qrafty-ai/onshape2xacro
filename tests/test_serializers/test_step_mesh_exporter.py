@@ -7,6 +7,9 @@ from OCP.TCollection import TCollection_ExtendedString
 from OCP.XCAFDoc import XCAFDoc_DocumentTool
 from OCP.TDataStd import TDataStd_Name
 from OCP.STEPControl import STEPControl_AsIs
+import zipfile
+from typing import Any, Dict
+from dataclasses import dataclass
 
 
 def make_step(tmp_path: Path) -> Path:
@@ -91,3 +94,118 @@ def test_export_step_uses_workspace_id(tmp_path: Path):
     assert exporter.client.bodies[0]["stepUnit"] == "METER"
     assert exporter.client.bodies[0]["stepVersionString"] == "AP242"
     assert exporter.client.bodies[0]["storeInDocument"] is False
+
+
+@dataclass
+class DummyPart:
+    partId: str
+    name: str = "Part"
+    isRigidAssembly: bool = False
+
+
+@dataclass
+class DummyInstance:
+    name: str
+
+
+class DummyCadMapping:
+    def __init__(
+        self, parts: Dict[Any, DummyPart], instances: Dict[Any, DummyInstance]
+    ):
+        self.parts = parts
+        self.instances = instances
+        self.document_id = "doc"
+        self.wtype = "w"
+        self.workspace_id = "ws"
+        self.element_id = "elem"
+
+
+def test_step_mapping_with_gaps(tmp_path: Path):
+    # Setup CAD with gaps in instance indices: <1>, <3>
+    parts = {
+        "key1": DummyPart(partId="p1", name="A"),
+        "key3": DummyPart(partId="p1", name="A"),
+    }
+    instances = {
+        "key1": DummyInstance(name="A <1>"),
+        "key3": DummyInstance(name="A <3>"),
+    }
+    cad = DummyCadMapping(parts, instances)
+
+    from onshape2xacro.mesh_exporters.step import _map_keys_to_export_names
+
+    mapping = _map_keys_to_export_names(cad)
+
+    # Expected:
+    # key1 (index 1) -> "A"
+    # key3 (index 3) -> "A (1)" because it's the second instance of "A"
+    assert mapping["key1"] == "A"
+    assert mapping["key3"] == "A (1)"
+
+
+def test_export_link_meshes_integration(tmp_path: Path):
+    # This tests the full flow with a mocked zip response
+    parts = {
+        "k1": DummyPart(partId="p1", name="PartA"),
+        "k2": DummyPart(partId="p2", name="PartB"),
+    }
+    instances = {
+        "k1": DummyInstance(name="PartA <1>"),
+        "k2": DummyInstance(name="PartB <1>"),
+    }
+    cad = DummyCadMapping(parts, instances)
+
+    # Create a dummy assembly.zip with STEP files
+    zip_path = tmp_path / "meshes" / "assembly.zip"
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(zip_path, "w"):
+        pass
+
+    class DummyResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "t1", "requestState": "DONE", "resultExternalDataIds": ["f1"]}
+
+    class DummyClient:
+        def request(self, *args, **kwargs):
+            if "/externaldata/" in args[1]:
+                import io
+
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w"):
+                    pass
+                return type(
+                    "Obj",
+                    (),
+                    {"content": buf.getvalue(), "raise_for_status": lambda: None},
+                )
+            return DummyResponse()
+
+    exporter = StepMeshExporter(DummyClient(), cad)
+
+    import onshape2xacro.mesh_exporters.step as step_mod
+
+    def mock_load_zip(path):
+        from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+
+        c1 = BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape()
+        c2 = BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape()
+        return {"PartA": c1, "PartB": c2}
+
+    original_load = step_mod._load_step_shapes_from_zip
+    step_mod._load_step_shapes_from_zip = mock_load_zip
+
+    try:
+        link_groups = {"link1": ["k1", "k2"]}
+        mesh_map, missing = exporter.export_link_meshes(
+            link_groups, tmp_path / "meshes"
+        )
+
+        assert "link1" in mesh_map
+        assert mesh_map["link1"] == "link1.stl"
+        assert (tmp_path / "meshes" / "link1.stl").exists()
+    finally:
+        step_mod._load_step_shapes_from_zip = original_load

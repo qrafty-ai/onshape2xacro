@@ -77,8 +77,9 @@ class XacroSerializer(RobotSerializer):
 
         # 1. Export meshes (Stage 6)
         mesh_map = {}
+        missing_meshes = {}
         if download_assets:
-            mesh_map = self._export_meshes(robot, mesh_dir_path)
+            mesh_map, missing_meshes = self._export_meshes(robot, mesh_dir_path)
 
         # 2. Group by subassembly (Stage 4)
         module_groups = self._group_by_subassembly(robot)
@@ -156,6 +157,12 @@ class XacroSerializer(RobotSerializer):
 
         # 5. Generate default configs (Stage 7)
         self._generate_default_configs(robot, config_dir)
+
+        # 6. Write missing meshes prompt file if any parts failed
+        if missing_meshes:
+            self._write_missing_meshes_prompt(
+                missing_meshes, mesh_dir_path, robot, out_dir
+            )
 
     def _group_by_subassembly(self, robot: "Robot") -> Dict[Any, Dict[str, List]]:
         groups = {}
@@ -494,22 +501,33 @@ class XacroSerializer(RobotSerializer):
         # Append to root
         root.append(joint_el)
 
-    def _export_meshes(self, robot: "Robot", mesh_dir: Path) -> Dict[str, str]:
-        link_groups: Dict[str, list[str]] = {}
+    def _export_meshes(
+        self, robot: "Robot", mesh_dir: Path
+    ) -> tuple[dict[str, str], dict[str, list[dict[str, str]]]]:
+        """Export meshes for robot links.
+
+        Returns:
+            Tuple of (mesh_map, missing_meshes) where:
+            - mesh_map: Dict mapping link_name -> stl filename
+            - missing_meshes: Dict mapping link_name -> list of missing part info
+        """
+        link_groups: Dict[str, list[Any]] = {}
         for _, data in robot.nodes(data=True):
             link = data.get("link") or data.get("data")
-            if not link or not hasattr(link, "part_ids"):
+            if not link or not hasattr(link, "keys"):
                 continue
-            link_groups[sanitize_name(link.name)] = link.part_ids
+            link_groups[sanitize_name(link.name)] = link.keys
+        logger.info(f"[DEBUG] link_groups count: {len(link_groups)}")
         # StepMeshExporter needs robot.client and robot.cad which should be set in pipeline
         client = getattr(robot, "client", None)
         cad = getattr(robot, "cad", None)
+        logger.info(f"[DEBUG] client={client is not None}, cad={cad is not None}")
         if client and cad:
             exporter = StepMeshExporter(client, cad)
             return exporter.export_link_meshes(link_groups, mesh_dir)
 
         logger.warning("Robot missing client or CAD, skipping STEP mesh export")
-        return {}
+        return {}, {}
 
     def _generate_default_configs(self, robot: "Robot", config_dir: Path):
         joint_limits = {}
@@ -546,3 +564,88 @@ class XacroSerializer(RobotSerializer):
             yaml.dump({"joint_limits": joint_limits}, f)
         with open(config_dir / "inertials.yaml", "w") as f:
             yaml.dump({"inertials": inertials}, f)
+
+    def _write_missing_meshes_prompt(
+        self,
+        missing_meshes: dict[str, list[dict[str, str]]],
+        mesh_dir: Path,
+        robot: "Robot",
+        out_dir: Path,
+    ):
+        """Write a detailed prompt file for user to manually export missing meshes."""
+        prompt_path = out_dir / "MISSING_MESHES.md"
+
+        # Count total missing parts
+        total_missing = sum(len(parts) for parts in missing_meshes.values())
+
+        lines = [
+            "# Missing Mesh Files",
+            "",
+            f"**{total_missing} parts** could not be automatically exported to STL meshes.",
+            "",
+            "The robot model has been generated, but some links are missing their mesh files.",
+            "You need to manually export these parts from Onshape and place the STL files",
+            f"in the `{mesh_dir.relative_to(out_dir)}` directory.",
+            "",
+            "---",
+            "",
+            "## Instructions",
+            "",
+            "For each link listed below:",
+            "",
+            "1. Open the Onshape assembly in your browser",
+            "2. Select all the parts listed under that link",
+            "3. Right-click and choose **Export...**",
+            "4. Select **STL** format",
+            "5. Save the file with the exact filename shown (e.g., `link_name.stl`)",
+            f"6. Place the exported STL file in: `{mesh_dir}`",
+            "",
+            "---",
+            "",
+            "## Missing Parts by Link",
+            "",
+        ]
+
+        for link_name, parts in sorted(missing_meshes.items()):
+            lines.append(f"### Link: `{link_name}`")
+            lines.append("")
+            lines.append(f"**Expected STL filename:** `{link_name}.stl`")
+            lines.append("")
+            lines.append("**Parts to include:**")
+            lines.append("")
+            lines.append("| Part Name | Export Name | Reason |")
+            lines.append("|-----------|-------------|--------|")
+
+            for part_info in parts:
+                part_name = part_info.get("part_name", "unknown")
+                export_name = part_info.get("export_name", "unknown")
+                reason = part_info.get("reason", "unknown")
+                lines.append(f"| {part_name} | {export_name} | {reason} |")
+
+            lines.append("")
+
+        lines.extend(
+            [
+                "---",
+                "",
+                "## After Manual Export",
+                "",
+                "Once you've exported all missing STL files:",
+                "",
+                "1. Verify all files exist in the meshes directory",
+                "2. Re-run your URDF/Xacro validator to check the model loads correctly",
+                "3. The robot model should now render properly in RViz or Gazebo",
+                "",
+                "---",
+                "",
+                "*This file was auto-generated by onshape2xacro.*",
+            ]
+        )
+
+        with open(prompt_path, "w") as f:
+            f.write("\n".join(lines))
+
+        logger.warning(
+            f"Missing meshes for {len(missing_meshes)} links ({total_missing} parts). "
+            f"See {prompt_path} for manual export instructions."
+        )

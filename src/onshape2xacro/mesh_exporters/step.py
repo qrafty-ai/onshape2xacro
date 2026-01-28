@@ -3,7 +3,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, List, Tuple
 
 import numpy as np
 from onshape_robotics_toolkit.connect import Client, HTTP
@@ -75,6 +75,46 @@ def _export_name_from_instance_name(instance_name: str) -> str:
     if index <= 1:
         return base
     return f"{base} ({index - 1})"
+
+
+def _map_keys_to_export_names(cad: Any) -> Dict[Any, str]:
+    """Map CAD part keys to their expected export names in Onshape STEP.
+
+    Onshape STEP export names instances as:
+    - BaseName (if index 1 or no index)
+    - BaseName (1) (if index 2)
+    - BaseName (2) (if index 3)
+    ...
+    Even if there are gaps in indices (e.g. <1>, <3>), they are assigned
+    sequential names based on their sorted order.
+    """
+    groups: Dict[str, List[Tuple[int, Any]]] = {}
+    for key in cad.parts:
+        instance = cad.instances.get(key)
+        if not instance:
+            continue
+        name = instance.name
+        match = INSTANCE_SUFFIX_REGEX.match(name)
+        if match:
+            base = match.group("base")
+            index = int(match.group("index"))
+        else:
+            base = name
+            index = 0
+        if base not in groups:
+            groups[base] = []
+        groups[base].append((index, key))
+
+    mapping = {}
+    for base, items in groups.items():
+        # Sort by index, then by key as tie-breaker
+        items.sort(key=lambda x: (x[0], str(x[1])))
+        for i, (_, key) in enumerate(items):
+            if i == 0:
+                mapping[key] = base
+            else:
+                mapping[key] = f"{base} ({i})"
+    return mapping
 
 
 def _export_name_from_filename(filename: str) -> str:
@@ -427,71 +467,110 @@ class StepMeshExporter:
         return output_path
 
     def export_link_meshes(
-        self, link_groups: Dict[str, list[str]], mesh_dir: Path
-    ) -> Dict[str, str]:
+        self, link_groups: Dict[str, list[Any]], mesh_dir: Path
+    ) -> Tuple[Dict[str, str], Dict[str, List[Dict[str, str]]]]:
+        """Export link meshes from STEP files.
+
+        Returns:
+            Tuple of (mesh_map, missing_meshes) where:
+            - mesh_map: Dict mapping link_name -> stl filename
+            - missing_meshes: Dict mapping link_name -> list of missing part info dicts
+              Each missing part dict has keys: part_id, export_name, part_name, reason
+        """
         mesh_dir.mkdir(parents=True, exist_ok=True)
         archive_path = mesh_dir / "assembly.zip"
         self.export_step(archive_path)
 
         shapes_by_name = _load_step_shapes_from_zip(archive_path)
-        part_by_id = {part.partId: part for part in self.cad.parts.values()}
-        export_name_by_part_id: Dict[str, str] = {}
-        for key, part in self.cad.parts.items():
-            instance = self.cad.instances.get(key)
-            if not instance:
-                continue
-            export_name_by_part_id[part.partId] = _export_name_from_instance_name(
-                instance.name
-            )
+        export_name_by_key = _map_keys_to_export_names(self.cad)
 
         stl_writer = StlAPI_Writer()
         mesh_map: Dict[str, str] = {}
+        missing_meshes: Dict[str, List[Dict[str, str]]] = {}
 
-        for link_name, part_ids in link_groups.items():
-            if not part_ids:
+        for link_name, keys in link_groups.items():
+            if not keys:
                 continue
-            real_part_ids = [
-                part_id
-                for part_id in part_ids
-                if not getattr(part_by_id.get(part_id), "isRigidAssembly", False)
-            ]
-            if not real_part_ids:
-                continue
-            ref_part_id = real_part_ids[0]
-            if ref_part_id not in part_by_id:
-                raise RuntimeError(f"Missing part id in CAD: {ref_part_id}")
 
-            link_world = _part_world_matrix(part_by_id[ref_part_id])
+            # Filter out rigid assemblies and non-existent parts
+            valid_keys = []
+            for key in keys:
+                part = self.cad.parts.get(key)
+                if part is None:
+                    continue
+                if getattr(part, "isRigidAssembly", False):
+                    continue
+                valid_keys.append(key)
+
+            if not valid_keys:
+                continue
+
+            # Reference part for the link frame (first part in the link)
+            ref_key = valid_keys[0]
+            link_world = _part_world_matrix(self.cad.parts[ref_key])
             link_world_inv = np.linalg.inv(link_world)
 
             compound = TopoDS_Compound()
             builder = BRep_Builder()
             builder.MakeCompound(compound)
+            link_missing_parts: List[Dict[str, str]] = []
+            has_valid_shapes = False
 
-            for part_id in part_ids:
-                part = part_by_id.get(part_id)
+            for key in keys:
+                part = self.cad.parts.get(key)
                 if part is None:
-                    raise RuntimeError(f"Missing part id in CAD: {part_id}")
+                    link_missing_parts.append(
+                        {
+                            "part_id": str(key),
+                            "export_name": "unknown",
+                            "part_name": "unknown",
+                            "reason": "key not found in CAD parts",
+                        }
+                    )
+                    continue
+
                 if getattr(part, "isRigidAssembly", False):
                     continue
-                export_name = export_name_by_part_id.get(part_id)
+
+                export_name = export_name_by_key.get(key)
                 if not export_name:
-                    raise RuntimeError(f"Missing export name for part id: {part_id}")
+                    link_missing_parts.append(
+                        {
+                            "part_id": getattr(part, "partId", str(key)),
+                            "export_name": "unknown",
+                            "part_name": getattr(part, "name", "unknown"),
+                            "reason": "no export name mapping found",
+                        }
+                    )
+                    continue
+
                 shape = shapes_by_name.get(export_name)
                 if shape is None:
-                    raise RuntimeError(
-                        f"Missing STEP file for export name: {export_name}"
+                    link_missing_parts.append(
+                        {
+                            "part_id": getattr(part, "partId", str(key)),
+                            "export_name": export_name,
+                            "part_name": getattr(part, "name", "unknown"),
+                            "reason": f"STEP file '{export_name}' not found in zip",
+                        }
                     )
+                    continue
 
+                # Compute transform: link_world_inv * part_world
                 part_world = _part_world_matrix(part)
                 link_from_part = link_world_inv @ part_world
                 trsf = _matrix_to_trsf(link_from_part)
                 transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
                 builder.Add(compound, transformed)
+                has_valid_shapes = True
 
-            BRepMesh_IncrementalMesh(compound, 0.001)
-            out_path = mesh_dir / f"{link_name}.stl"
-            stl_writer.Write(compound, str(out_path))
-            mesh_map[link_name] = out_path.name
+            if link_missing_parts:
+                missing_meshes[link_name] = link_missing_parts
 
-        return mesh_map
+            if has_valid_shapes:
+                BRepMesh_IncrementalMesh(compound, 0.001)
+                out_path = mesh_dir / f"{link_name}.stl"
+                stl_writer.Write(compound, str(out_path))
+                mesh_map[link_name] = out_path.name
+
+        return mesh_map, missing_meshes
