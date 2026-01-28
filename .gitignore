@@ -16,7 +16,9 @@ build/
 *.egg-info/
 uv.lock
 
-# Project specific
+# Worktrees
+.worktrees/
+worktrees/
 ORT.log
 ORT.yaml
 *.png
