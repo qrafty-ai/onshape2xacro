@@ -1,5 +1,5 @@
 from pathlib import Path
-from onshape2xacro.mesh_exporters.step import split_step_to_meshes
+from onshape2xacro.mesh_exporters.step import StepMeshExporter, split_step_to_meshes
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 from OCP.STEPCAFControl import STEPCAFControl_Writer
 from OCP.TDocStd import TDocStd_Document
@@ -44,3 +44,50 @@ def test_split_step_to_meshes(tmp_path: Path):
     mesh_map = split_step_to_meshes(step_path, link_groups, tmp_path)
     assert (tmp_path / "link_ab.stl").exists()
     assert mesh_map["link_ab"] == "link_ab.stl"
+
+
+def test_export_step_uses_workspace_id(tmp_path: Path):
+    class DummyCad:
+        document_id = "doc123"
+        wtype = "w"
+        workspace_id = "ws456"
+        element_id = "elem789"
+
+    class DummyResponse:
+        def __init__(self, payload=None, content=b""):
+            self._payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class DummyClient:
+        def __init__(self):
+            self.paths = []
+            self.bodies = []
+
+        def request(self, method, path, **kwargs):
+            self.paths.append(path)
+            if path.endswith("/export/step"):
+                self.bodies.append(kwargs.get("body"))
+                return DummyResponse({"id": "t1"})
+            if path.startswith("/api/translations/"):
+                return DummyResponse(
+                    {"requestState": "DONE", "resultExternalDataIds": ["f1"]}
+                )
+            return DummyResponse({}, content=b"STEP")
+
+    exporter = StepMeshExporter(DummyClient(), DummyCad())
+    output_path = tmp_path / "assembly.step"
+    exporter.export_step(output_path)
+
+    assert exporter.client.paths
+    assert f"/{DummyCad.wtype}/{DummyCad.workspace_id}/" in exporter.client.paths[0]
+    assert exporter.client.paths[0].endswith("/export/step")
+    assert exporter.client.bodies
+    assert exporter.client.bodies[0]["stepUnit"] == "METER"
+    assert exporter.client.bodies[0]["stepVersionString"] == "AP242"
+    assert exporter.client.bodies[0]["storeInDocument"] is False

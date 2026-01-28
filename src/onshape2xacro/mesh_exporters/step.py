@@ -1,8 +1,11 @@
 import re
+import tempfile
 import time
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
+import numpy as np
 from onshape_robotics_toolkit.connect import Client, HTTP
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TDocStd import TDocStd_Document
@@ -13,14 +16,17 @@ from OCP.TDF import TDF_Label, TDF_LabelSequence
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.TopLoc import TopLoc_Location
 from OCP.BRep import BRep_Builder
+from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
 from OCP.TopoDS import TopoDS_Compound
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.StlAPI import StlAPI_Writer
+from OCP.gp import gp_Trsf
 
 
 EXPORT_ID_REGEX = re.compile(
     r"(?:export:|exportId:|partId=|id=|OCCURRENCE_ID: ?\[?)([A-Za-z0-9+/_-]+)"
 )
+INSTANCE_SUFFIX_REGEX = re.compile(r"^(?P<base>.+?)\s*<(?P<index>\d+)>$")
 
 
 def _get_shape_tool(doc: TDocStd_Document):
@@ -58,6 +64,45 @@ def _parse_export_id(label_name: str) -> str:
     if match:
         return match.group(1)
     return ""
+
+
+def _export_name_from_instance_name(instance_name: str) -> str:
+    match = INSTANCE_SUFFIX_REGEX.match(instance_name or "")
+    if not match:
+        return instance_name
+    base = match.group("base")
+    index = int(match.group("index"))
+    if index <= 1:
+        return base
+    return f"{base} ({index - 1})"
+
+
+def _export_name_from_filename(filename: str) -> str:
+    name = re.sub(r"^.* - ", "", filename)
+    if name.lower().endswith(".step"):
+        name = name[:-5]
+    elif name.lower().endswith(".stp"):
+        name = name[:-4]
+    return name
+
+
+def _matrix_to_trsf(matrix: np.ndarray) -> gp_Trsf:
+    trsf = gp_Trsf()
+    trsf.SetValues(
+        matrix[0][0],
+        matrix[0][1],
+        matrix[0][2],
+        matrix[0][3],
+        matrix[1][0],
+        matrix[1][1],
+        matrix[1][2],
+        matrix[1][3],
+        matrix[2][0],
+        matrix[2][1],
+        matrix[2][2],
+        matrix[2][3],
+    )
+    return trsf
 
 
 def _get_label_location(shape_tool: Any, label: TDF_Label) -> TopLoc_Location:
@@ -174,6 +219,89 @@ def _collect_shapes(
     part_locations[part_id] = parent_loc
 
 
+def _get_free_shape_labels(shape_tool: Any) -> TDF_LabelSequence:
+    labels = TDF_LabelSequence()
+    get_free_shapes = getattr(shape_tool, "GetFreeShapes", None)
+    if not callable(get_free_shapes):
+        get_free_shapes = getattr(shape_tool, "GetFreeShapes_s", None)
+    if not callable(get_free_shapes):
+        raise RuntimeError("ShapeTool missing GetFreeShapes method")
+    get_free_shapes(labels)
+    return labels
+
+
+def _get_shape(shape_tool: Any, label: TDF_Label):
+    get_shape = getattr(shape_tool, "GetShape_s", None)
+    if not callable(get_shape):
+        get_shape = getattr(shape_tool, "GetShape", None)
+    if not callable(get_shape):
+        raise RuntimeError("ShapeTool missing GetShape method")
+    return get_shape(label)
+
+
+def _load_step_shapes(step_path: Path) -> list[Any]:
+    doc = TDocStd_Document(TCollection_ExtendedString("step"))
+    reader = STEPCAFControl_Reader()
+    reader.SetNameMode(True)
+
+    status = reader.ReadFile(str(step_path))
+    if status != IFSelect_RetDone:
+        raise RuntimeError(f"STEP read failed: {status}")
+
+    reader.Transfer(doc)
+    shape_tool = _get_shape_tool(doc)
+    labels = _get_free_shape_labels(shape_tool)
+
+    shapes = []
+    for i in range(labels.Length()):
+        label = labels.Value(i + 1)
+        shape = _get_shape(shape_tool, label)
+        if not shape.IsNull():
+            shapes.append(shape)
+    return shapes
+
+
+def _load_step_shapes_from_zip(zip_path: Path) -> Dict[str, Any]:
+    shapes_by_name: Dict[str, Any] = {}
+    with zipfile.ZipFile(zip_path) as archive:
+        step_names = [
+            name
+            for name in archive.namelist()
+            if name.lower().endswith(".step") or name.lower().endswith(".stp")
+        ]
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for name in step_names:
+                export_name = _export_name_from_filename(name)
+                if export_name in shapes_by_name:
+                    raise RuntimeError(f"Duplicate STEP export name: {export_name}")
+
+                step_path = tmp_path / Path(name).name
+                step_path.write_bytes(archive.read(name))
+                shapes = _load_step_shapes(step_path)
+
+                compound = TopoDS_Compound()
+                builder = BRep_Builder()
+                builder.MakeCompound(compound)
+                for shape in shapes:
+                    builder.Add(compound, shape)
+                shapes_by_name[export_name] = compound
+
+    return shapes_by_name
+
+
+def _part_world_matrix(part: Any) -> np.ndarray:
+    part_tf = getattr(part, "worldToPartTF", None)
+    if part_tf is None:
+        return np.eye(4)
+    tf_value = getattr(part_tf, "to_tf", None)
+    if callable(tf_value):
+        return tf_value()
+    if tf_value is not None:
+        return tf_value
+    return np.eye(4)
+
+
 def split_step_to_meshes(
     step_path: Path, link_groups: Dict[str, list[str]], mesh_dir: Path
 ) -> Dict[str, str]:
@@ -245,23 +373,24 @@ class StepMeshExporter:
 
     def export_step(self, output_path: Path) -> Path:
         did = self.cad.document_id
-        wtype = self.cad.wvm
-        wid = self.cad.wvm_id
+        wtype = getattr(self.cad, "wtype", None) or getattr(self.cad, "wvm", None)
+        wid = getattr(self.cad, "workspace_id", None) or getattr(
+            self.cad, "wvm_id", None
+        )
         eid = self.cad.element_id
-
-        payload = {
-            "formatName": "STEP",
-            "storeInDocument": False,
-            "stepVersionString": "AP242",
-            "extractAssemblyHierarchy": True,
-            "includeExportIds": True,
-            "flattenAssemblies": False,
-        }
+        if not wtype or not wid:
+            raise AttributeError(
+                "CAD object missing workspace identifiers (wtype/workspace_id)"
+            )
 
         response = self.client.request(
             HTTP.POST,
-            f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/translations",
-            body=payload,
+            f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/export/step",
+            body={
+                "stepUnit": "METER",
+                "stepVersionString": "AP242",
+                "storeInDocument": False,
+            },
         )
         response.raise_for_status()
         translation_id = response.json().get("id")
@@ -301,6 +430,68 @@ class StepMeshExporter:
         self, link_groups: Dict[str, list[str]], mesh_dir: Path
     ) -> Dict[str, str]:
         mesh_dir.mkdir(parents=True, exist_ok=True)
-        step_path = mesh_dir / "assembly.step"
-        self.export_step(step_path)
-        return split_step_to_meshes(step_path, link_groups, mesh_dir)
+        archive_path = mesh_dir / "assembly.zip"
+        self.export_step(archive_path)
+
+        shapes_by_name = _load_step_shapes_from_zip(archive_path)
+        part_by_id = {part.partId: part for part in self.cad.parts.values()}
+        export_name_by_part_id: Dict[str, str] = {}
+        for key, part in self.cad.parts.items():
+            instance = self.cad.instances.get(key)
+            if not instance:
+                continue
+            export_name_by_part_id[part.partId] = _export_name_from_instance_name(
+                instance.name
+            )
+
+        stl_writer = StlAPI_Writer()
+        mesh_map: Dict[str, str] = {}
+
+        for link_name, part_ids in link_groups.items():
+            if not part_ids:
+                continue
+            real_part_ids = [
+                part_id
+                for part_id in part_ids
+                if not getattr(part_by_id.get(part_id), "isRigidAssembly", False)
+            ]
+            if not real_part_ids:
+                continue
+            ref_part_id = real_part_ids[0]
+            if ref_part_id not in part_by_id:
+                raise RuntimeError(f"Missing part id in CAD: {ref_part_id}")
+
+            link_world = _part_world_matrix(part_by_id[ref_part_id])
+            link_world_inv = np.linalg.inv(link_world)
+
+            compound = TopoDS_Compound()
+            builder = BRep_Builder()
+            builder.MakeCompound(compound)
+
+            for part_id in part_ids:
+                part = part_by_id.get(part_id)
+                if part is None:
+                    raise RuntimeError(f"Missing part id in CAD: {part_id}")
+                if getattr(part, "isRigidAssembly", False):
+                    continue
+                export_name = export_name_by_part_id.get(part_id)
+                if not export_name:
+                    raise RuntimeError(f"Missing export name for part id: {part_id}")
+                shape = shapes_by_name.get(export_name)
+                if shape is None:
+                    raise RuntimeError(
+                        f"Missing STEP file for export name: {export_name}"
+                    )
+
+                part_world = _part_world_matrix(part)
+                link_from_part = link_world_inv @ part_world
+                trsf = _matrix_to_trsf(link_from_part)
+                transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
+                builder.Add(compound, transformed)
+
+            BRepMesh_IncrementalMesh(compound, 0.001)
+            out_path = mesh_dir / f"{link_name}.stl"
+            stl_writer.Write(compound, str(out_path))
+            mesh_map[link_name] = out_path.name
+
+        return mesh_map
