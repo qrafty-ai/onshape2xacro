@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
 from onshape2xacro.condensed_robot import CondensedRobot
 from onshape2xacro.serializers import XacroSerializer
@@ -46,7 +47,18 @@ def _get_client_and_cad(url: str, max_depth: int) -> tuple[Client, CAD]:
 
 def run_export(config: ExportConfig):
     """Run the complete export pipeline."""
-    client, cad = _get_client_and_cad(config.url, config.max_depth)
+    url_path = Path(config.url)
+    if url_path.is_dir() and (url_path / "cad.pickle").exists():
+        import pickle
+
+        print(f"Loading pre-fetched CAD data from {url_path}...")
+        with open(url_path / "cad.pickle", "rb") as f:
+            cad = pickle.load(f)
+        client = None
+        asset_path = url_path / "assembly.zip"
+    else:
+        client, cad = _get_client_and_cad(config.url, config.max_depth)
+        asset_path = None
 
     # 3. Build Kinematic Graph
     print("Building kinematic graph...")
@@ -59,6 +71,7 @@ def run_export(config: ExportConfig):
     # Set client and cad for serializer's mesh export
     robot.client = client
     robot.cad = cad
+    robot.asset_path = asset_path
 
     # 5. Load Config Overrides
     print("Loading configuration overrides...")
@@ -85,16 +98,24 @@ def run_visualize(config: VisualizeConfig):
 
 
 def run_fetch_cad(config: FetchCadConfig):
-    """Fetch CAD data and save to pickle."""
+    """Fetch CAD data and save to a directory."""
     import pickle
+    from onshape2xacro.mesh_exporters.step import StepMeshExporter
 
-    _, cad = _get_client_and_cad(config.url, config.max_depth)
+    client, cad = _get_client_and_cad(config.url, config.max_depth)
 
-    print(f"Saving CAD data to {config.output}...")
-    with open(config.output, "wb") as f:
+    output_dir = Path(config.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Saving CAD data to {output_dir / 'cad.pickle'}...")
+    with open(output_dir / "cad.pickle", "wb") as f:
         pickle.dump(cad, f)
 
-    print("Fetch CAD complete!")
+    print(f"Exporting STEP assembly to {output_dir / 'assembly.zip'}...")
+    exporter = StepMeshExporter(client, cad)
+    exporter.export_step(output_dir / "assembly.zip")
+
+    print(f"Fetch CAD complete! Data saved to {output_dir}")
 
 
 def run_auth(config: AuthConfig):

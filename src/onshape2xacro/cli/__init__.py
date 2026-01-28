@@ -36,11 +36,14 @@ class VisualizeConfig:
 
 @dataclass
 class FetchCadConfig:
-    """Fetch CAD data from Onshape and save to a JSON file."""
+    """Fetch CAD data and assets from Onshape and save to a directory."""
 
     url: tyro.conf.Positional[str]
+    """Onshape document URL pointing to an assembly."""
     output: Path
+    """Output directory to save the CAD data (cad.pickle and assembly.zip)."""
     max_depth: int = 5
+    """Maximum subassembly traversal depth."""
 
 
 @dataclass

@@ -521,12 +521,17 @@ class XacroSerializer(RobotSerializer):
         # StepMeshExporter needs robot.client and robot.cad which should be set in pipeline
         client = getattr(robot, "client", None)
         cad = getattr(robot, "cad", None)
-        logger.info(f"[DEBUG] client={client is not None}, cad={cad is not None}")
-        if client and cad:
-            exporter = StepMeshExporter(client, cad)
+        asset_path = getattr(robot, "asset_path", None)
+        logger.info(
+            f"[DEBUG] client={client is not None}, cad={cad is not None}, asset_path={asset_path}"
+        )
+        if (client and cad) or (cad and asset_path):
+            exporter = StepMeshExporter(client, cad, asset_path=asset_path)
             return exporter.export_link_meshes(link_groups, mesh_dir)
 
-        logger.warning("Robot missing client or CAD, skipping STEP mesh export")
+        logger.warning(
+            "Robot missing client/CAD or CAD/asset_path, skipping STEP mesh export"
+        )
         return {}, {}
 
     def _generate_default_configs(self, robot: "Robot", config_dir: Path):
