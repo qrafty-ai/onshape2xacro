@@ -147,7 +147,8 @@ class CondensedRobot(Robot):
 
             payloads = [node_payload(n) for n in group_nodes]
             part_ids = [
-                getattr(p, "part_id", str(n)) for p, n in zip(payloads, group_nodes)
+                getattr(p, "partId", getattr(p, "part_id", str(n)))
+                for p, n in zip(payloads, group_nodes)
             ]
             occurrences = [
                 getattr(p, "occurrence", n) for p, n in zip(payloads, group_nodes)
