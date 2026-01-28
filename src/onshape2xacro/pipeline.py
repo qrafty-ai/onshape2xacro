@@ -11,7 +11,6 @@ from onshape2xacro.cli import (
     FetchCadConfig,
     VisualizeConfig,
 )
-from .cad_utils import cad_to_serializable
 from onshape2xacro.auth import (
     get_credentials,
     store_credentials,
@@ -83,15 +82,14 @@ def run_visualize(config: VisualizeConfig):
 
 
 def run_fetch_cad(config: FetchCadConfig):
-    """Fetch CAD data and save to JSON."""
+    """Fetch CAD data and save to pickle."""
+    import pickle
+
     _, cad = _get_client_and_cad(config.url, config.max_depth)
 
-    print("Converting CAD to serializable format...")
-    serializable_cad = cad_to_serializable(cad)
-
     print(f"Saving CAD data to {config.output}...")
-    with open(config.output, "w") as f:
-        f.write(serializable_cad.model_dump_json(indent=2))
+    with open(config.output, "wb") as f:
+        pickle.dump(cad, f)
 
     print("Fetch CAD complete!")
 
