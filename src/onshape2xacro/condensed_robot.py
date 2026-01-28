@@ -80,6 +80,7 @@ class CondensedRobot(Robot):
 
     client: Any = None
     cad: Any = None
+    asset_path: Any = None
 
     @classmethod
     def from_graph(

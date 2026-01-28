@@ -407,11 +407,19 @@ def split_step_to_meshes(
 
 
 class StepMeshExporter:
-    def __init__(self, client: Client, cad: Any):
+    def __init__(
+        self,
+        client: Client | None,
+        cad: Any,
+        asset_path: Path | None = None,
+    ):
         self.client = client
         self.cad = cad
+        self.asset_path = asset_path
 
     def export_step(self, output_path: Path) -> Path:
+        if self.client is None:
+            raise RuntimeError("Cannot export STEP without Onshape client")
         did = self.cad.document_id
         wtype = getattr(self.cad, "wtype", None) or getattr(self.cad, "wvm", None)
         wid = getattr(self.cad, "workspace_id", None) or getattr(
@@ -478,8 +486,11 @@ class StepMeshExporter:
               Each missing part dict has keys: part_id, export_name, part_name, reason
         """
         mesh_dir.mkdir(parents=True, exist_ok=True)
-        archive_path = mesh_dir / "assembly.zip"
-        self.export_step(archive_path)
+        if self.asset_path and self.asset_path.exists():
+            archive_path = self.asset_path
+        else:
+            archive_path = mesh_dir / "assembly.zip"
+            self.export_step(archive_path)
 
         shapes_by_name = _load_step_shapes_from_zip(archive_path)
         export_name_by_key = _map_keys_to_export_names(self.cad)
