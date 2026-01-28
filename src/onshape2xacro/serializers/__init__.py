@@ -199,8 +199,13 @@ class XacroSerializer(RobotSerializer):
                 )
 
         for joint in elements["joints"]:
-            if joint and is_joint(joint.name):
-                self._joint_to_xacro(macro, joint, config)
+            if joint:
+                if is_joint(joint.name):
+                    # Export as movable joint (revolute/prismatic)
+                    self._joint_to_xacro(macro, joint, config, force_fixed=False)
+                else:
+                    # Export as fixed joint for fasten mates and other non-joint connections
+                    self._joint_to_xacro(macro, joint, config, force_fixed=True)
 
         # Call children macros
         for child in children:
@@ -233,8 +238,13 @@ class XacroSerializer(RobotSerializer):
         for parent, child in robot.edges:
             edge_data = robot.get_edge_data(parent, child)
             joint = edge_data.get("data")
-            if joint and is_joint(joint.name):
-                self._joint_to_xacro(macro, joint, config)
+            if joint:
+                if is_joint(joint.name):
+                    # Export as movable joint (revolute/prismatic)
+                    self._joint_to_xacro(macro, joint, config, force_fixed=False)
+                else:
+                    # Export as fixed joint for fasten mates and other non-joint connections
+                    self._joint_to_xacro(macro, joint, config, force_fixed=True)
 
     def _link_to_xacro(
         self,
@@ -283,55 +293,164 @@ class XacroSerializer(RobotSerializer):
         )
 
         if name in mesh_map:
-            for tag in ["visual", "collision"]:
-                el = ET.SubElement(link_el, tag)
-                geom = ET.SubElement(el, "geometry")
-                mesh = ET.SubElement(geom, "mesh")
-                mesh.set(
-                    "filename",
-                    f"{mesh_rel_path}/{mesh_map[name]}",
-                )
+            # Use link.to_xml() to get complete link definition with origins
+            try:
+                link_xml = link.to_xml()
+                if isinstance(link_xml, str):
+                    link_xml_el = ET.fromstring(link_xml)
+                else:
+                    link_xml_el = link_xml
+                
+                # Extract visual and collision elements with origins
+                for tag in ["visual", "collision"]:
+                    existing_el = link_xml_el.find(tag)
+                    if existing_el is not None:
+                        # Copy the element (includes origin if present)
+                        new_el = ET.fromstring(ET.tostring(existing_el, encoding="unicode"))
+                        # Update mesh filename
+                        mesh_elem = new_el.find(".//mesh")
+                        if mesh_elem is not None:
+                            mesh_elem.set("filename", f"{mesh_rel_path}/{mesh_map[name]}")
+                        link_el.append(new_el)
+                    else:
+                        # Fallback: create without origin
+                        el = ET.SubElement(link_el, tag)
+                        geom = ET.SubElement(el, "geometry")
+                        mesh = ET.SubElement(geom, "mesh")
+                        mesh.set("filename", f"{mesh_rel_path}/{mesh_map[name]}")
+            except Exception:
+                # Fallback: create visual and collision without origin
+                for tag in ["visual", "collision"]:
+                    el = ET.SubElement(link_el, tag)
+                    geom = ET.SubElement(el, "geometry")
+                    mesh = ET.SubElement(geom, "mesh")
+                    mesh.set(
+                        "filename",
+                        f"{mesh_rel_path}/{mesh_map[name]}",
+                    )
 
     def _joint_to_xacro(
-        self, root: ET._Element, joint: "BaseJoint", config: ConfigOverride
+        self, root: ET._Element, joint: "BaseJoint", config: ConfigOverride, force_fixed: bool = False
     ):
-        name = sanitize_name(get_joint_name(joint.name))
-        joint_el = ET.SubElement(root, "joint")
+        # For non-joint_* mates, use the original name (not removing joint_ prefix)
+        if force_fixed:
+            name = sanitize_name(joint.name)
+        else:
+            name = sanitize_name(get_joint_name(joint.name))
+        
+        # Use to_xml() to get complete joint definition with origin, axis, etc.
+        try:
+            joint_xml = joint.to_xml()
+            # Parse the XML to get the element
+            if isinstance(joint_xml, str):
+                joint_el = ET.fromstring(joint_xml)
+            else:
+                joint_el = joint_xml
+        except Exception:
+            # Fallback to manual creation if to_xml() fails
+            joint_el = ET.Element("joint")
+        
+        # Override name with prefix-aware version
         joint_el.set("name", f"${{prefix}}{name}")
 
-        jtype = getattr(joint, "joint_type", "fixed")
-        joint_el.set(
-            "type",
-            "revolute"
-            if jtype == "revolute"
-            else "prismatic"
-            if jtype == "prismatic"
-            else "fixed",
-        )
+        # Force fixed type if requested
+        if force_fixed:
+            # But check if it has axis and limit - might be a revolute joint misnamed
+            has_axis = joint_el.find("axis") is not None
+            has_limit = joint_el.find("limit") is not None
+            if has_axis and has_limit:
+                # This looks like a revolute/prismatic joint, not fixed
+                # Check axis to determine type
+                axis_elem = joint_el.find("axis")
+                if axis_elem is not None:
+                    axis_xyz = axis_elem.get("xyz", "0 0 1")
+                    # If it has axis and limit, it's likely revolute
+                    joint_el.set("type", "revolute")
+            else:
+                joint_el.set("type", "fixed")
+        else:
+            # Ensure type is set (to_xml() should have it, but verify)
+            jtype = getattr(joint, "joint_type", "fixed")
+            joint_el.set(
+                "type",
+                "revolute"
+                if jtype == "revolute"
+                else "prismatic"
+                if jtype == "prismatic"
+                else "fixed",
+            )
 
-        ET.SubElement(
-            joint_el, "parent", link=f"${{prefix}}{sanitize_name(joint.parent)}"
-        )
-        ET.SubElement(
-            joint_el, "child", link=f"${{prefix}}{sanitize_name(joint.child)}"
-        )
+        # Update parent and child links with prefix
+        parent_elem = joint_el.find("parent")
+        if parent_elem is not None:
+            parent_elem.set("link", f"${{prefix}}{sanitize_name(joint.parent)}")
+        else:
+            ET.SubElement(
+                joint_el, "parent", link=f"${{prefix}}{sanitize_name(joint.parent)}"
+            )
+        
+        child_elem = joint_el.find("child")
+        if child_elem is not None:
+            child_elem.set("link", f"${{prefix}}{sanitize_name(joint.child)}")
+        else:
+            ET.SubElement(
+                joint_el, "child", link=f"${{prefix}}{sanitize_name(joint.child)}"
+            )
 
+        # Update joint limits if it's a movable joint
+        jtype = joint_el.get("type", "fixed")
         if jtype in ["revolute", "prismatic"]:
+            # First, try to get limits from joint.to_xml() (from Onshape)
+            limit_elem = joint_el.find("limit")
+            onshape_limit = None
+            if limit_elem is not None:
+                # Extract existing limits from Onshape
+                onshape_limit = {
+                    "lower": float(limit_elem.get("lower", "-3.14")),
+                    "upper": float(limit_elem.get("upper", "3.14")),
+                    "effort": float(limit_elem.get("effort", "100")),
+                    "velocity": float(limit_elem.get("velocity", "1.0")),
+                }
+            
+            # Default limits (used only if Onshape didn't provide limits)
             default_limit = {
                 "lower": -3.14,
                 "upper": 3.14,
                 "effort": 100,
                 "velocity": 1.0,
             }
-            val = config.get_joint_limit(name, default_limit)
-            ET.SubElement(
-                joint_el,
-                "limit",
-                lower=str(val["lower"]),
-                upper=str(val["upper"]),
-                effort=str(val["effort"]),
-                velocity=str(val["velocity"]),
-            )
+            
+            # Use Onshape limits as base, or default if not available
+            base_limit = onshape_limit if onshape_limit else default_limit
+            
+            # Apply config overrides (if any)
+            val = config.get_joint_limit(name, base_limit)
+            
+            # Update or create limit element
+            if limit_elem is not None:
+                limit_elem.set("lower", str(val["lower"]))
+                limit_elem.set("upper", str(val["upper"]))
+                limit_elem.set("effort", str(val["effort"]))
+                limit_elem.set("velocity", str(val["velocity"]))
+            else:
+                ET.SubElement(
+                    joint_el,
+                    "limit",
+                    lower=str(val["lower"]),
+                    upper=str(val["upper"]),
+                    effort=str(val["effort"]),
+                    velocity=str(val["velocity"]),
+                )
+        
+        # Add axis element if missing (for revolute/prismatic joints)
+        if jtype in ["revolute", "prismatic"]:
+            axis_elem = joint_el.find("axis")
+            if axis_elem is None:
+                # Default to Z-axis rotation
+                ET.SubElement(joint_el, "axis", xyz="0 0 1")
+        
+        # Append to root
+        root.append(joint_el)
 
     def _export_meshes(self, robot: "Robot", mesh_dir: Path) -> Dict[str, str]:
         mesh_map = {"__robot_name__": robot.name}

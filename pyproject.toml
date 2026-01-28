@@ -9,10 +9,16 @@ dependencies = [
     "tyro",
     "lxml",
     "pyyaml",
+    "xacro>=2.1.1",
 ]
 
 [project.scripts]
 onshape2xacro = "onshape2xacro.cli:main"
+validate-xacro = "onshape2xacro.validate:main"
+visualize-export = "onshape2xacro.visualize_export:main"
+simulate-robot = "onshape2xacro.simulate_robot:main"
+fix-xacro = "onshape2xacro.fix_xacro:main"
+xacro-to-urdf = "onshape2xacro.xacro_to_urdf:main"
 
 [tool.uv]
 package = true
@@ -24,4 +30,11 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "pytest",
+]
+visualize = [
+    "matplotlib",
+]
+simulate = [
+    "pybullet",
+    "numpy",
 ]
