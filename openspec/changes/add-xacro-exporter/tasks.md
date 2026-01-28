@@ -6,11 +6,11 @@
 > - Run and pass all tests before completing each stage
 
 ## 1. Project Setup
-- [ ] 1.1 Add dependencies to pyproject.toml (onshape-robotics-toolkit, tyro, lxml, pyyaml, pytest)
+- [x] 1.1 Add dependencies to pyproject.toml (onshape-robotics-toolkit, tyro, lxml, pyyaml, pytest, OCP)
 - [ ] 1.2 Create package structure: `src/onshape2xacro/{cli,serializers,config}/`
 - [ ] 1.3 Create test structure: `tests/{test_cli,test_serializers,test_config}/`
-- [ ] 1.4 Configure uv and verify imports work
-- [ ] 1.5 **Safeguard**: Run `pytest` to ensure test infrastructure works
+- [x] 1.4 Configure uv and verify imports work
+- [x] 1.5 **Safeguard**: Run `pytest` to ensure test infrastructure works
 
 ## 2. CLI Foundation
 ### 2.1 Tests First
@@ -34,11 +34,14 @@
 - [ ] 3.1.2 Write tests for joint name extraction (strip `joint_` prefix)
 - [ ] 3.1.3 Write tests for module boundary detection (subassembly with `joint_*` → module)
 - [ ] 3.1.4 Write tests for nested module detection
+- [ ] 3.1.5 Write tests for `CondensedRobot` graph reduction (merging links via non-joint edges)
 
 ### 3.2 Implementation
 - [ ] 3.2.1 Implement joint prefix filter function
 - [ ] 3.2.2 Implement joint name extraction function
 - [ ] 3.2.3 Implement module boundary detection for subassemblies
+- [x] 3.2.4 Implement `CondensedRobot` parallel model
+- [x] 3.2.5 Implement graph reduction logic to merge links connected by fixed/non-joint edges
 
 ### 3.3 Safeguard
 - [ ] 3.3.1 **Run all joint detection tests and ensure 100% pass**
@@ -50,6 +53,7 @@
 - [ ] 4.1.3 Write tests for prefix argument in macros (`${prefix}${name}`)
 - [ ] 4.1.4 Write tests for entry-point xacro with includes
 - [ ] 4.1.5 Write tests for name sanitization (spaces, special chars → valid ROS names)
+- [ ] 4.1.6 Write tests for `mesh_map` key sanitization using `sanitize_name`
 
 ### 4.2 Implementation
 - [ ] 4.2.1 Create XacroSerializer class following RobotSerializer pattern
@@ -57,6 +61,7 @@
 - [ ] 4.2.3 Generate entry-point xacro that includes all modules
 - [ ] 4.2.4 Add prefix argument support to all macros
 - [ ] 4.2.5 Implement name sanitization utility
+- [ ] 4.2.6 Ensure `mesh_map` keys are sanitized in serializers
 
 ### 4.3 Safeguard
 - [ ] 4.3.1 **Run all serializer tests and ensure 100% pass**
@@ -79,11 +84,18 @@
 - [ ] 6.1.1 Write tests for mesh directory structure (meshes/<module>/<link>.stl)
 - [ ] 6.1.2 Write tests for mesh path references in xacro
 - [ ] 6.1.3 Write tests for mesh naming conflict resolution
+- [x] 6.1.4 Write tests for `StepMeshExporter` and STEP splitting (local vs global coordinates)
+- [x] 6.1.5 Write tests for robust Export-ID regex parsing from STEP metadata
+- [x] 6.1.6 Write tests for fail-fast behavior on STEP parse/split errors
 
 ### 6.2 Implementation
-- [ ] 6.2.1 Implement mesh directory structure
-- [ ] 6.2.2 Add proper mesh path references in xacro
-- [ ] 6.2.3 Handle mesh naming conflicts (sanitize, deduplicate)
+- [x] 6.2.1 Implement mesh directory structure
+- [x] 6.2.2 Add proper mesh path references in xacro
+- [x] 6.2.3 Handle mesh naming conflicts (sanitize, deduplicate)
+- [x] 6.2.4 Implement `StepMeshExporter` using OCP
+- [x] 6.2.5 Implement single STEP translation and local split logic
+- [x] 6.2.6 Implement regex-based Export-ID extraction
+- [x] 6.2.7 Implement fail-fast error handling for STEP parsing and splitting
 
 ### 6.3 Safeguard
 - [ ] 6.3.1 **Run all mesh export tests and ensure 100% pass**
@@ -113,7 +125,7 @@
 - [ ] 8.1.4 Write tests for error handling (API failures, invalid assemblies)
 
 ### 8.2 Implementation
-- [ ] 8.2.1 Implement pipeline: Client → CAD → KinematicGraph → Robot
+- [x] 8.2.1 Implement pipeline: Client → CAD → KinematicGraph → CondensedRobot
 - [ ] 8.2.2 Add Onshape URL parsing and validation
 - [ ] 8.2.3 Integrate XacroSerializer with pipeline
 - [ ] 8.2.4 Add error handling for API failures with helpful messages

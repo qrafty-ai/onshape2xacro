@@ -2,6 +2,7 @@ import pickle
 import sys
 from onshape_robotics_toolkit import KinematicGraph
 from onshape_robotics_toolkit.parse import CAD
+from onshape2xacro.condensed_robot import CondensedRobot
 
 
 def load_cad(file_path: str):
@@ -26,7 +27,13 @@ def load_cad(file_path: str):
         print(f"  - Nodes: {len(graph.nodes)}")
         print(f"  - Edges: {len(graph.edges)}")
 
-        return cad, graph
+        print("\nBuilding Condensed Robot...")
+        robot = CondensedRobot.from_graph(graph, cad=cad, name=cad.name or "robot")
+        print("✅ Condensed Robot built successfully")
+        print(f"  - Links: {len(robot.nodes)}")
+        print(f"  - Joints: {len(robot.edges)}")
+
+        return cad, graph, robot
 
     except FileNotFoundError:
         print(f"Error: File not found: {file_path}")

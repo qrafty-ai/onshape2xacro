@@ -1,6 +1,6 @@
 import os
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
-from onshape_robotics_toolkit.robot import Robot
+from onshape2xacro.condensed_robot import CondensedRobot
 from onshape2xacro.serializers import XacroSerializer
 from onshape2xacro.config import ConfigOverride
 from onshape2xacro.cli import (
@@ -54,8 +54,11 @@ def run_export(config: ExportConfig):
 
     # 4. Create Robot Model
     print("Creating robot model...")
-    robot_name = config.name or cad.name
-    robot = Robot.from_graph(graph, client=client, name=robot_name)
+    robot_name = config.name or cad.name or "robot"
+    robot = CondensedRobot.from_graph(graph, cad=cad, name=robot_name)
+    # Set client and cad for serializer's mesh export
+    robot.client = client
+    robot.cad = cad
 
     # 5. Load Config Overrides
     print("Loading configuration overrides...")

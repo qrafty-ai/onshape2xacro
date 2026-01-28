@@ -3,7 +3,7 @@
 ## Context
 
 We're building a CLI tool that bridges Onshape CAD assemblies to ROS2 xacro files. The tool must:
-1. Reuse onshape-robotics-toolkit's existing pipeline (Client→CAD→KinematicGraph→Robot)
+1. Reuse onshape-robotics-toolkit's existing pipeline (Client→CAD→KinematicGraph→CondensedRobot)
 2. Generate hierarchical xacro files that mirror kinematic structure
 3. Support iterative development with YAML overrides
 4. Enable multi-robot deployments via xacro prefix arguments
@@ -35,29 +35,28 @@ We're building a CLI tool that bridges Onshape CAD assemblies to ROS2 xacro file
 
 **Why**:
 - Consistent with library architecture
-- Reuses Robot model traversal logic
+- Reuses CondensedRobot model traversal logic
 - Link/Joint to_xml() methods already generate valid URDF elements
 
 **Alternative considered**: Generate xacro from scratch
 **Rejected**: Would duplicate graph traversal and XML generation logic
 
-### Decision 2: Joint Detection via Naming Convention
-**Choice**: Only mates with names starting with `joint_` are treated as robot joints. All other mates become fixed connections.
+### Decision 2: Joint Detection and Graph Reduction
+**Choice**: Only mates with names starting with `joint_` are treated as robot joints. All other mates (fixed, cylindrical, etc.) are treated as fixed connections and merged during robot condensation.
 
 **Why**:
-- Explicit control over kinematic structure
-- Onshape assemblies often have many movable mates for CAD purposes that aren't robot joints
-- Clear naming convention is self-documenting
-- Avoids accidental joint creation from fastener mates, etc.
+- Explicit control over kinematic structure.
+- Simplifies the kinematic graph by collapsing rigid sub-assemblies.
+- Matches `CondensedRobot` implementation logic.
 
-**Implementation**: Filter `KinematicGraph.edges` to only include mates where `mate.name.startswith("joint_")`
+**Implementation**: Filter `KinematicGraph.edges` to identify `joint_` prefixes. Non-matching edges are treated as fixed in the `CondensedRobot` model.
 
 **Naming examples**:
 - `joint_shoulder` → revolute joint named `shoulder`
 - `joint_gripper_left` → joint named `gripper_left`
 - `hinge_door` → fixed connection (no `joint_` prefix)
 
-### Decision 2b: Module Boundary Heuristic
+### Decision 3: Module Boundary Heuristic
 **Choice**: A subassembly becomes a xacro module IFF it contains mates prefixed with `joint_`
 
 **Why**:
@@ -67,7 +66,35 @@ We're building a CLI tool that bridges Onshape CAD assemblies to ROS2 xacro file
 
 **Implementation**: Check if subassembly subtree contains any edges matching `joint_*` naming pattern
 
-### Decision 3: YAML Override Architecture
+### Decision 4: Condensed Robot Model
+**Choice**: Implement `CondensedRobot` as a parallel implementation to the standard `Robot` model.
+
+**Why**:
+- Decouples the simplified kinematic structure used for xacro generation from the raw CAD graph.
+- Handles the merging of links connected by non-joint mates into single aggregate links.
+- Provides a clean API for the serializer to traverse the simplified structure.
+
+### Decision 5: High-Fidelity STEP Mesh Export
+**Choice**: Use Open CASCADE (OCP) to perform a single STEP translation of the entire assembly, followed by local splitting of parts.
+
+**Why**:
+- Superior geometry fidelity compared to individual STL exports.
+- Reduced API overhead by fetching a single STEP file for the assembly.
+- Precise alignment of parts in the global/local coordinate frames.
+
+**Implementation**:
+- Fail-fast behavior: Immediate error if STEP parsing or splitting fails.
+- Robust Export-ID parsing: Use regex to extract stable Onshape IDs from STEP metadata.
+- Sanitization: All mesh filenames and `mesh_map` keys MUST use `sanitize_name` for consistency.
+
+### Decision 6: Robust Export-ID Parsing
+**Choice**: Use regular expressions to extract Onshape IDs from STEP export metadata.
+
+**Why**:
+- Onshape's STEP export adds varying metadata strings around the internal IDs.
+- Regex provides the most robust way to extract the core ID needed for mapping parts to the kinematic graph.
+
+### Decision 7: YAML Override Architecture
 **Choice**: Separate YAML files per parameter type (joint_limits.yaml, inertials.yaml, dynamics.yaml)
 
 **Why**:
@@ -85,7 +112,7 @@ shoulder_joint:
   effort: 100.0
 ```
 
-### Decision 4: Prefix via Xacro Arguments
+### Decision 8: Prefix via Xacro Arguments
 **Choice**: Generate macros accepting `prefix` argument, all link/joint names use `${prefix}${name}`
 
 **Why**:
@@ -93,7 +120,7 @@ shoulder_joint:
 - No modification needed for single robot (prefix="")
 - Enables multi-robot without regeneration
 
-### Decision 5: CLI with tyro
+### Decision 9: CLI with tyro
 **Choice**: Single `export` command using tyro with dataclass config
 
 **Why**:
@@ -116,45 +143,45 @@ class ExportConfig:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         CLI (tyro)                               │
+│                         CLI (tyro)                              │
 │  onshape2xacro export <url> --output ./out --config overrides   │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    ExportPipeline                                │
+│                    ExportPipeline                               │
 │  1. Client(env) → connect to Onshape API                        │
 │  2. CAD.from_url(url) → fetch assembly structure                │
 │  3. KinematicGraph.from_cad(cad) → build kinematic tree         │
-│  4. Robot.from_graph(graph) → create robot model                │
+│  4. CondensedRobot.from_graph(graph) → create robot model       │
 │  5. ConfigOverride.load(yaml) → load user overrides             │
 │  6. XacroSerializer.save(robot, config, output) → generate      │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   XacroSerializer                                │
-│  - Analyze Robot graph for module boundaries                    │
+│                   XacroSerializer                               │
+│  - Analyze CondensedRobot graph for module boundaries           │
 │  - Generate xacro files per module                              │
 │  - Apply config overrides to parameters                         │
 │  - Export meshes to organized directory                         │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Output Structure                             │
-│  output/                                                         │
-   |-- robot.urdf.xacro # entry point
-│  ├── modules/                                                       │
-       |--
-│  │   ├── arm/arm.xacro        # Module macro                    │
-│  │   └── gripper/gripper.xacro                                  │
-│  ├── meshes/                                                     │
-│  │   ├── arm/*.stl                                              │
-│  │   └── gripper/*.stl                                          │
-│  └── config/                                                     │
-│      ├── joint_limits.yaml    # Defaults (editable)             │
-│      └── inertials.yaml                                         │
+│                     Output Structure                            │
+│  output/                                                        │
+│  ├── urdf/                                                      │
+│  │   ├── <robot>.xacro       # entry point                      │
+│  │   └── <module>/                                              │
+│  │       └── <module>.xacro  # Module macro                     │
+│  ├── meshes/                                                    │
+│  │   └── <module>/                                              │
+│  │       └── <link>.stl                                         │
+│  └── config/                                                    │
+│      ├── joint_limits.yaml   # Defaults (editable)              │
+│      ├── inertials.yaml                                         │
+│      └── dynamics.yaml                                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -166,8 +193,8 @@ class ExportConfig:
 ### Risk: Complex nested subassemblies may produce unwieldy hierarchy
 **Mitigation**: `--max-depth` flag to flatten beyond certain level; module boundary heuristic reduces noise
 
-### Trade-off: STL-only limits visual fidelity
-**Accepted**: STL is universally supported; DAE can be added later as enhancement
+### Trade-off: STL-only output format
+**Accepted**: Although we utilize a high-fidelity STEP-based pipeline for geometry processing and meshing, the final output remains STL for universal ROS compatibility. STL lacks color/material metadata, which is accepted for v1; DAE/GLB support can be added later.
 
 ### Trade-off: No automatic ros2_control setup
 **Accepted**: Out of scope for v1; xacro structure supports easy manual addition
