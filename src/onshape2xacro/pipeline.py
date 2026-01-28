@@ -4,12 +4,14 @@ from onshape_robotics_toolkit.robot import Robot
 from onshape2xacro.serializers import XacroSerializer
 from onshape2xacro.config import ConfigOverride
 from onshape2xacro.cli import (
-    ExportConfig,
-    VisualizeConfig,
     AuthConfig,
-    AuthStatusConfig,
     AuthLogoutConfig,
+    AuthStatusConfig,
+    ExportConfig,
+    FetchCadConfig,
+    VisualizeConfig,
 )
+from .cad_utils import cad_to_serializable
 from onshape2xacro.auth import (
     get_credentials,
     store_credentials,
@@ -78,6 +80,20 @@ def run_visualize(config: VisualizeConfig):
     output_path = str(config.output)
     graph.show(file_name=output_path)
     print(f"Graph saved to {output_path}")
+
+
+def run_fetch_cad(config: FetchCadConfig):
+    """Fetch CAD data and save to JSON."""
+    _, cad = _get_client_and_cad(config.url, config.max_depth)
+
+    print("Converting CAD to serializable format...")
+    serializable_cad = cad_to_serializable(cad)
+
+    print(f"Saving CAD data to {config.output}...")
+    with open(config.output, "w") as f:
+        f.write(serializable_cad.model_dump_json(indent=2))
+
+    print("Fetch CAD complete!")
 
 
 def run_auth(config: AuthConfig):
