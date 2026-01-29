@@ -1,19 +1,17 @@
-import re
 import os
-import asyncio
-from typing import Any, TYPE_CHECKING, Dict, List
+from typing import Any, TYPE_CHECKING, Dict, List, Optional
 from pathlib import Path
-from lxml import etree as ET
+import lxml.etree as ET
 from loguru import logger
 import yaml
 
 from onshape_robotics_toolkit.formats.base import RobotSerializer
 from onshape2xacro.config import ConfigOverride
+from onshape2xacro.naming import sanitize_name
+from onshape2xacro.mesh_exporters.step import StepMeshExporter
 
 if TYPE_CHECKING:
     from onshape_robotics_toolkit.robot import Robot
-    from onshape_robotics_toolkit.models.link import Link
-    from onshape_robotics_toolkit.models.joint import BaseJoint
 
 
 def is_joint(name: str) -> bool:
@@ -28,17 +26,7 @@ def get_joint_name(name: str) -> str:
     return name
 
 
-def sanitize_name(name: str) -> str:
-    """Sanitize Onshape names to valid ROS identifiers."""
-    s = name.lower()
-    s = s.replace(" ", "_").replace("-", "_")
-    s = re.sub(r"[^a-z0-9_]", "", s)
-    s = re.sub(r"_+", "_", s)
-    if s and s[0].isdigit():
-        s = "_" + s
-    if not s:
-        s = "_"
-    return s
+# sanitize_name was here, moved to naming.py
 
 
 def is_module_boundary(graph) -> bool:
@@ -66,23 +54,32 @@ class XacroSerializer(RobotSerializer):
         return ET.tostring(root, pretty_print=True, encoding="unicode")
 
     def save(
-        self, robot: "Robot", path: str, download_assets: bool = True, **options: Any
+        self,
+        robot: "Robot",
+        file_path: str,
+        download_assets: bool = True,
+        mesh_dir: Optional[str] = None,
+        **options: Any,
     ):
         """Save robot to hierarchical xacro structure."""
-        out_dir = Path(path)
+        out_dir = Path(file_path)
         urdf_dir = out_dir / "urdf"
-        mesh_dir = out_dir / "meshes"
+        if mesh_dir:
+            mesh_dir_path = Path(mesh_dir)
+        else:
+            mesh_dir_path = out_dir / "meshes"
         config_dir = out_dir / "config"
 
         config = options.get("config") or ConfigOverride()
 
-        for d in [urdf_dir, mesh_dir, config_dir]:
+        for d in [urdf_dir, mesh_dir_path, config_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
         # 1. Export meshes (Stage 6)
         mesh_map = {}
+        missing_meshes = {}
         if download_assets:
-            mesh_map = self._export_meshes(robot, mesh_dir)
+            mesh_map, missing_meshes = self._export_meshes(robot, mesh_dir_path)
 
         # 2. Group by subassembly (Stage 4)
         module_groups = self._group_by_subassembly(robot)
@@ -90,7 +87,10 @@ class XacroSerializer(RobotSerializer):
 
         # 3. Generate Xacro files for each subassembly
         for parent_key, elements in module_groups.items():
-            name = sanitize_name(parent_key.name if parent_key else robot.name)
+            if parent_key is None:
+                name = sanitize_name(robot.name)
+            else:
+                name = sanitize_name(getattr(parent_key, "name", str(parent_key)))
 
             # Root assembly goes directly in urdf/
             # Subassemblies go in urdf/<name>/
@@ -104,12 +104,16 @@ class XacroSerializer(RobotSerializer):
             root = self._create_xacro_root(name)
 
             # Calculate mesh relative path from this xacro file
-            mesh_rel_path = os.path.relpath(mesh_dir, module_path.parent)
+            mesh_rel_path = os.path.relpath(str(mesh_dir_path), str(module_path.parent))
 
             # Add includes for children modules
-            children = [k for k in module_groups.keys() if k and k.parent == parent_key]
+            children = [
+                k
+                for k in module_groups.keys()
+                if k and getattr(k, "parent", None) == parent_key
+            ]
             for child in children:
-                child_name = sanitize_name(child.name)
+                child_name = sanitize_name(getattr(child, "name", str(child)))
                 # Child path is urdf/<child_name>/<child_name>.xacro
                 child_module_path = urdf_dir / child_name / f"{child_name}.xacro"
                 rel_inc_path = os.path.relpath(child_module_path, module_path.parent)
@@ -154,23 +158,39 @@ class XacroSerializer(RobotSerializer):
         # 5. Generate default configs (Stage 7)
         self._generate_default_configs(robot, config_dir)
 
+        # 6. Write missing meshes prompt file if any parts failed
+        if missing_meshes:
+            self._write_missing_meshes_prompt(
+                missing_meshes, mesh_dir_path, robot, out_dir
+            )
+
     def _group_by_subassembly(self, robot: "Robot") -> Dict[Any, Dict[str, List]]:
         groups = {}
         # PathKey objects in networkx graph
         for node, data in robot.nodes(data=True):
-            parent = node.parent
+            link = data.get("link") or data.get("data")
+            parent = getattr(node, "parent", None)
+            if parent is None and link is not None:
+                parent = getattr(link, "parent", None)
             if parent not in groups:
                 groups[parent] = {"links": [], "joints": []}
-            groups[parent]["links"].append(data.get("data"))
+            if link is not None:
+                groups[parent]["links"].append(link)
 
         for parent_node, child_node in robot.edges:
             edge_data = robot.get_edge_data(parent_node, child_node)
-            joint = edge_data.get("data")
+            joint = edge_data.get("joint") or edge_data.get("data")
             # Joint belongs to the module of its parent link
-            parent_key = parent_node.parent
+            parent_key = getattr(parent_node, "parent", None)
+            if parent_key is None:
+                parent_data = robot.nodes[parent_node]
+                parent_link = parent_data.get("link") or parent_data.get("data")
+                if parent_link is not None:
+                    parent_key = getattr(parent_link, "parent", None)
             if parent_key not in groups:
                 groups[parent_key] = {"links": [], "joints": []}
-            groups[parent_key]["joints"].append(joint)
+            if joint is not None:
+                groups[parent_key]["joints"].append(joint)
         return groups
 
     def _create_xacro_root(self, name: str) -> ET._Element:
@@ -209,7 +229,7 @@ class XacroSerializer(RobotSerializer):
 
         # Call children macros
         for child in children:
-            child_name = sanitize_name(child.name)
+            child_name = sanitize_name(getattr(child, "name", str(child)))
             ET.SubElement(
                 macro,
                 "{http://www.ros.org/wiki/xacro}" + child_name,
@@ -229,7 +249,7 @@ class XacroSerializer(RobotSerializer):
         macro.set("params", "prefix:=''")
 
         for node, data in robot.nodes(data=True):
-            link = data.get("data")
+            link = data.get("link") or data.get("data")
             if link:
                 self._link_to_xacro(
                     macro, link, config, mesh_map, mesh_rel_path=mesh_rel_path
@@ -237,7 +257,7 @@ class XacroSerializer(RobotSerializer):
 
         for parent, child in robot.edges:
             edge_data = robot.get_edge_data(parent, child)
-            joint = edge_data.get("data")
+            joint = edge_data.get("joint") or edge_data.get("data")
             if joint:
                 if is_joint(joint.name):
                     # Export as movable joint (revolute/prismatic)
@@ -249,7 +269,7 @@ class XacroSerializer(RobotSerializer):
     def _link_to_xacro(
         self,
         root: ET._Element,
-        link: "Link",
+        link: Any,
         config: ConfigOverride,
         mesh_map: Dict,
         mesh_rel_path: str = "meshes",
@@ -293,185 +313,121 @@ class XacroSerializer(RobotSerializer):
         )
 
         if name in mesh_map:
-            # Use link.to_xml() to get complete link definition with origins
-            try:
-                link_xml = link.to_xml()
-                if isinstance(link_xml, str):
-                    link_xml_el = ET.fromstring(link_xml)
-                else:
-                    link_xml_el = link_xml
-                
-                # Extract visual and collision elements with origins
-                for tag in ["visual", "collision"]:
-                    existing_el = link_xml_el.find(tag)
-                    if existing_el is not None:
-                        # Copy the element (includes origin if present)
-                        new_el = ET.fromstring(ET.tostring(existing_el, encoding="unicode"))
-                        # Update mesh filename
-                        mesh_elem = new_el.find(".//mesh")
-                        if mesh_elem is not None:
-                            mesh_elem.set("filename", f"{mesh_rel_path}/{mesh_map[name]}")
-                        link_el.append(new_el)
-                    else:
-                        # Fallback: create without origin
-                        el = ET.SubElement(link_el, tag)
-                        geom = ET.SubElement(el, "geometry")
-                        mesh = ET.SubElement(geom, "mesh")
-                        mesh.set("filename", f"{mesh_rel_path}/{mesh_map[name]}")
-            except Exception:
-                # Fallback: create visual and collision without origin
-                for tag in ["visual", "collision"]:
-                    el = ET.SubElement(link_el, tag)
-                    geom = ET.SubElement(el, "geometry")
-                    mesh = ET.SubElement(geom, "mesh")
-                    mesh.set(
-                        "filename",
-                        f"{mesh_rel_path}/{mesh_map[name]}",
-                    )
+            # Check for origin in link (baked mesh means identity origin)
+            # LinkRecord now contains frame_transform used for baking
+            for tag in ["visual", "collision"]:
+                el = ET.SubElement(link_el, tag)
+                # Identity origin for baked meshes
+                ET.SubElement(el, "origin", xyz="0 0 0", rpy="0 0 0")
+                geom = ET.SubElement(el, "geometry")
+                mesh = ET.SubElement(geom, "mesh")
+                mesh.set("filename", f"{mesh_rel_path}/{mesh_map[name]}")
 
     def _joint_to_xacro(
-        self, root: ET._Element, joint: "BaseJoint", config: ConfigOverride, force_fixed: bool = False
+        self,
+        root: ET._Element,
+        joint: Any,
+        config: ConfigOverride,
+        force_fixed: bool = False,
     ):
         # For non-joint_* mates, use the original name (not removing joint_ prefix)
         if force_fixed:
             name = sanitize_name(joint.name)
         else:
             name = sanitize_name(get_joint_name(joint.name))
-        
-        # Use to_xml() to get complete joint definition with origin, axis, etc.
-        try:
-            joint_xml = joint.to_xml()
-            # Parse the XML to get the element
-            if isinstance(joint_xml, str):
-                joint_el = ET.fromstring(joint_xml)
-            else:
-                joint_el = joint_xml
-        except Exception:
-            # Fallback to manual creation if to_xml() fails
-            joint_el = ET.Element("joint")
-        
-        # Override name with prefix-aware version
+
+        # JointRecord with stored origin from transformation pipeline
+        joint_el = ET.Element("joint")
+
+        # Set name and type
         joint_el.set("name", f"${{prefix}}{name}")
 
-        # Force fixed type if requested
-        if force_fixed:
-            # But check if it has axis and limit - might be a revolute joint misnamed
-            has_axis = joint_el.find("axis") is not None
-            has_limit = joint_el.find("limit") is not None
-            if has_axis and has_limit:
-                # This looks like a revolute/prismatic joint, not fixed
-                # Check axis to determine type
-                axis_elem = joint_el.find("axis")
-                if axis_elem is not None:
-                    axis_xyz = axis_elem.get("xyz", "0 0 1")
-                    # If it has axis and limit, it's likely revolute
-                    joint_el.set("type", "revolute")
-            else:
-                joint_el.set("type", "fixed")
-        else:
-            # Ensure type is set (to_xml() should have it, but verify)
-            jtype = getattr(joint, "joint_type", "fixed")
-            joint_el.set(
-                "type",
-                "revolute"
-                if jtype == "revolute"
-                else "prismatic"
-                if jtype == "prismatic"
-                else "fixed",
+        jtype = "fixed"
+        if not force_fixed:
+            jtype_str = str(getattr(joint, "joint_type", "fixed")).upper()
+            if "REVOLUTE" in jtype_str:
+                jtype = "revolute"
+            elif "PRISMATIC" in jtype_str:
+                jtype = "prismatic"
+        joint_el.set("type", jtype)
+
+        # Set Origin
+        if hasattr(joint, "origin") and joint.origin is not None:
+            origin = joint.origin
+            ET.SubElement(
+                joint_el,
+                "origin",
+                xyz=f"{origin.xyz[0]} {origin.xyz[1]} {origin.xyz[2]}",
+                rpy=f"{origin.rpy[0]} {origin.rpy[1]} {origin.rpy[2]}",
             )
+        else:
+            ET.SubElement(joint_el, "origin", xyz="0 0 0", rpy="0 0 0")
 
         # Update parent and child links with prefix
-        parent_elem = joint_el.find("parent")
-        if parent_elem is not None:
-            parent_elem.set("link", f"${{prefix}}{sanitize_name(joint.parent)}")
-        else:
-            ET.SubElement(
-                joint_el, "parent", link=f"${{prefix}}{sanitize_name(joint.parent)}"
-            )
-        
-        child_elem = joint_el.find("child")
-        if child_elem is not None:
-            child_elem.set("link", f"${{prefix}}{sanitize_name(joint.child)}")
-        else:
-            ET.SubElement(
-                joint_el, "child", link=f"${{prefix}}{sanitize_name(joint.child)}"
-            )
+        ET.SubElement(
+            joint_el, "parent", link=f"${{prefix}}{sanitize_name(joint.parent)}"
+        )
+        ET.SubElement(
+            joint_el, "child", link=f"${{prefix}}{sanitize_name(joint.child)}"
+        )
 
-        # Update joint limits if it's a movable joint
-        jtype = joint_el.get("type", "fixed")
+        # Update joint limits and axis if it's a movable joint
         if jtype in ["revolute", "prismatic"]:
-            # First, try to get limits from joint.to_xml() (from Onshape)
-            limit_elem = joint_el.find("limit")
-            onshape_limit = None
-            if limit_elem is not None:
-                # Extract existing limits from Onshape
-                onshape_limit = {
-                    "lower": float(limit_elem.get("lower", "-3.14")),
-                    "upper": float(limit_elem.get("upper", "3.14")),
-                    "effort": float(limit_elem.get("effort", "100")),
-                    "velocity": float(limit_elem.get("velocity", "1.0")),
-                }
-            
-            # Default limits (used only if Onshape didn't provide limits)
+            # Default to Z-axis rotation if not provided
+            ET.SubElement(joint_el, "axis", xyz="0 0 1")
+
+            # Limits
             default_limit = {
                 "lower": -3.14,
                 "upper": 3.14,
                 "effort": 100,
                 "velocity": 1.0,
             }
-            
-            # Use Onshape limits as base, or default if not available
-            base_limit = onshape_limit if onshape_limit else default_limit
-            
-            # Apply config overrides (if any)
-            val = config.get_joint_limit(name, base_limit)
-            
-            # Update or create limit element
-            if limit_elem is not None:
-                limit_elem.set("lower", str(val["lower"]))
-                limit_elem.set("upper", str(val["upper"]))
-                limit_elem.set("effort", str(val["effort"]))
-                limit_elem.set("velocity", str(val["velocity"]))
-            else:
-                ET.SubElement(
-                    joint_el,
-                    "limit",
-                    lower=str(val["lower"]),
-                    upper=str(val["upper"]),
-                    effort=str(val["effort"]),
-                    velocity=str(val["velocity"]),
+            # Use stored limits if available
+            stored_limits = getattr(joint, "limits", None)
+            if stored_limits:
+                # Basic mapping from Onshape limits object
+                default_limit["lower"] = getattr(
+                    stored_limits, "lower", default_limit["lower"]
                 )
-        
-        # Add axis element if missing (for revolute/prismatic joints)
-        if jtype in ["revolute", "prismatic"]:
-            axis_elem = joint_el.find("axis")
-            if axis_elem is None:
-                # Default to Z-axis rotation
-                ET.SubElement(joint_el, "axis", xyz="0 0 1")
-        
+                default_limit["upper"] = getattr(
+                    stored_limits, "upper", default_limit["upper"]
+                )
+
+            val = config.get_joint_limit(name, default_limit)
+            ET.SubElement(
+                joint_el,
+                "limit",
+                lower=str(val["lower"]),
+                upper=str(val["upper"]),
+                effort=str(val["effort"]),
+                velocity=str(val["velocity"]),
+            )
+
         # Append to root
         root.append(joint_el)
 
-    def _export_meshes(self, robot: "Robot", mesh_dir: Path) -> Dict[str, str]:
-        mesh_map = {"__robot_name__": robot.name}
+    def _export_meshes(
+        self, robot: "Robot", mesh_dir: Path
+    ) -> tuple[dict[str, str], dict[str, list[dict[str, str]]]]:
+        """Export meshes for robot links."""
+        link_records: Dict[str, Any] = {}
+        for _, data in robot.nodes(data=True):
+            link = data.get("link") or data.get("data")
+            if not link:
+                continue
+            link_records[sanitize_name(link.name)] = link
 
-        async def _download_all():
-            tasks = []
-            for node, data in robot.nodes(data=True):
-                asset = data.get("asset")
-                if asset:
-                    asset.mesh_dir = str(mesh_dir)
-                    tasks.append(asset.download())
-                    mesh_map[sanitize_name(data.get("data").name)] = asset.file_name
-            if tasks:
-                await asyncio.gather(*tasks)
+        client = getattr(robot, "client", None)
+        cad = getattr(robot, "cad", None)
+        asset_path = getattr(robot, "asset_path", None)
 
-        print(f"Downloading meshes to {mesh_dir}...")
-        try:
-            asyncio.run(_download_all())
-        except Exception as e:
-            logger.error(f"Failed to download meshes: {e}")
-        return mesh_map
+        if (client and cad) or (cad and asset_path):
+            exporter = StepMeshExporter(client, cad, asset_path=asset_path)
+            # Pass link records instead of just keys
+            return exporter.export_link_meshes(link_records, mesh_dir)
+
+        return {}, {}
 
     def _generate_default_configs(self, robot: "Robot", config_dir: Path):
         joint_limits = {}
@@ -508,3 +464,88 @@ class XacroSerializer(RobotSerializer):
             yaml.dump({"joint_limits": joint_limits}, f)
         with open(config_dir / "inertials.yaml", "w") as f:
             yaml.dump({"inertials": inertials}, f)
+
+    def _write_missing_meshes_prompt(
+        self,
+        missing_meshes: dict[str, list[dict[str, str]]],
+        mesh_dir: Path,
+        robot: "Robot",
+        out_dir: Path,
+    ):
+        """Write a detailed prompt file for user to manually export missing meshes."""
+        prompt_path = out_dir / "MISSING_MESHES.md"
+
+        # Count total missing parts
+        total_missing = sum(len(parts) for parts in missing_meshes.values())
+
+        lines = [
+            "# Missing Mesh Files",
+            "",
+            f"**{total_missing} parts** could not be automatically exported to STL meshes.",
+            "",
+            "The robot model has been generated, but some links are missing their mesh files.",
+            "You need to manually export these parts from Onshape and place the STL files",
+            f"in the `{mesh_dir.relative_to(out_dir)}` directory.",
+            "",
+            "---",
+            "",
+            "## Instructions",
+            "",
+            "For each link listed below:",
+            "",
+            "1. Open the Onshape assembly in your browser",
+            "2. Select all the parts listed under that link",
+            "3. Right-click and choose **Export...**",
+            "4. Select **STL** format",
+            "5. Save the file with the exact filename shown (e.g., `link_name.stl`)",
+            f"6. Place the exported STL file in: `{mesh_dir}`",
+            "",
+            "---",
+            "",
+            "## Missing Parts by Link",
+            "",
+        ]
+
+        for link_name, parts in sorted(missing_meshes.items()):
+            lines.append(f"### Link: `{link_name}`")
+            lines.append("")
+            lines.append(f"**Expected STL filename:** `{link_name}.stl`")
+            lines.append("")
+            lines.append("**Parts to include:**")
+            lines.append("")
+            lines.append("| Part Name | Export Name | Reason |")
+            lines.append("|-----------|-------------|--------|")
+
+            for part_info in parts:
+                part_name = part_info.get("part_name", "unknown")
+                export_name = part_info.get("export_name", "unknown")
+                reason = part_info.get("reason", "unknown")
+                lines.append(f"| {part_name} | {export_name} | {reason} |")
+
+            lines.append("")
+
+        lines.extend(
+            [
+                "---",
+                "",
+                "## After Manual Export",
+                "",
+                "Once you've exported all missing STL files:",
+                "",
+                "1. Verify all files exist in the meshes directory",
+                "2. Re-run your URDF/Xacro validator to check the model loads correctly",
+                "3. The robot model should now render properly in RViz or Gazebo",
+                "",
+                "---",
+                "",
+                "*This file was auto-generated by onshape2xacro.*",
+            ]
+        )
+
+        with open(prompt_path, "w") as f:
+            f.write("\n".join(lines))
+
+        logger.warning(
+            f"Missing meshes for {len(missing_meshes)} links ({total_missing} parts). "
+            f"See {prompt_path} for manual export instructions."
+        )

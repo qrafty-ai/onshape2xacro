@@ -11,6 +11,7 @@ dependencies = [
     "pyyaml",
     "xacro>=2.1.1",
     "keyring",
+    "cadquery-ocp>=7.7.0",
 ]
 
 [project.scripts]

@@ -6,9 +6,11 @@ import sys
 def test_visualize_config_defaults():
     from onshape2xacro.cli import VisualizeConfig
 
-    config = VisualizeConfig(url="https://cad.onshape.com/documents/123")
+    config = VisualizeConfig(
+        url="https://cad.onshape.com/documents/123", output=Path("viz.png")
+    )
     assert config.url == "https://cad.onshape.com/documents/123"
-    assert config.output is None
+    assert config.output == Path("viz.png")
     assert config.max_depth == 5
 
 
@@ -28,12 +30,19 @@ def test_visualize_config_custom():
 def test_cli_parsing_visualize(monkeypatch):
     from onshape2xacro.cli import VisualizeConfig, parse_args
 
-    test_args = ["onshape2xacro", "visualize", "https://cad.onshape.com/documents/123"]
+    test_args = [
+        "onshape2xacro",
+        "visualize",
+        "https://cad.onshape.com/documents/123",
+        "--output",
+        "viz.png",
+    ]
     monkeypatch.setattr(sys, "argv", test_args)
 
     config = parse_args()
     assert isinstance(config, VisualizeConfig)
     assert config.url == "https://cad.onshape.com/documents/123"
+    assert config.output == Path("viz.png")
 
 
 def test_cli_parsing_visualize_output(monkeypatch):

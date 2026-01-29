@@ -35,6 +35,18 @@ class VisualizeConfig:
 
 
 @dataclass
+class FetchCadConfig:
+    """Fetch CAD data and assets from Onshape and save to a directory."""
+
+    url: tyro.conf.Positional[str]
+    """Onshape document URL pointing to an assembly."""
+    output: Path
+    """Output directory to save the CAD data (cad.pickle and assembly.zip)."""
+    max_depth: int = 5
+    """Maximum subassembly traversal depth."""
+
+
+@dataclass
 class AuthLoginConfig:
     """Store Onshape API credentials in system keyring."""
 
@@ -69,7 +81,7 @@ class AuthConfig:
     ]
 
 
-def parse_args() -> Union[ExportConfig, VisualizeConfig, AuthConfig]:
+def parse_args() -> Union[ExportConfig, VisualizeConfig, FetchCadConfig, AuthConfig]:
     """Parse CLI arguments using tyro."""
     # Add version support
     if "--version" in sys.argv:
@@ -84,6 +96,7 @@ def parse_args() -> Union[ExportConfig, VisualizeConfig, AuthConfig]:
         {
             "export": ExportConfig,
             "visualize": VisualizeConfig,
+            "fetch-cad": FetchCadConfig,
             "auth": AuthConfig,
         }
     )
@@ -95,12 +108,19 @@ def main():
         config = parse_args()
 
         # Import pipeline here to avoid side effects (like ORT.yaml logging) during --help
-        from onshape2xacro.pipeline import run_auth, run_export, run_visualize
+        from onshape2xacro.pipeline import (
+            run_auth,
+            run_export,
+            run_fetch_cad,
+            run_visualize,
+        )
 
         if isinstance(config, ExportConfig):
             run_export(config)
         elif isinstance(config, VisualizeConfig):
             run_visualize(config)
+        elif isinstance(config, FetchCadConfig):
+            run_fetch_cad(config)
         elif isinstance(config, AuthConfig):
             run_auth(config)
     except SystemExit:
