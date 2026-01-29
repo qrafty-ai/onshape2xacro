@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import numpy as np
 from dataclasses import dataclass
 from typing import List, Any, Dict, Iterable, Tuple, cast, Optional
@@ -6,6 +7,8 @@ from collections.abc import Iterable as IterableABC
 from onshape_robotics_toolkit.robot import Robot
 from onshape_robotics_toolkit.models.link import Origin
 from onshape2xacro.naming import sanitize_name
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -88,6 +91,38 @@ def _part_world_matrix(part: Any) -> np.ndarray:
     if tf_value is not None:
         return cast(np.ndarray, tf_value)
     return np.eye(4)
+
+
+def occ_match(occ1, occ2):
+    """
+    Check if two Onshape occurrences match by checking their common suffix.
+    Handles PathKey, strings (space or / separated), lists, and tuples.
+    """
+    if occ1 is None or occ2 is None:
+        return False
+
+    def to_id_tuple(occ) -> tuple[str, ...]:
+        if hasattr(occ, "path") and isinstance(occ.path, (list, tuple)):
+            return tuple(str(x) for x in occ.path)
+        if isinstance(occ, (list, tuple)):
+            return tuple(str(x) for x in occ)
+        if isinstance(occ, str):
+            if " " in occ:
+                return tuple(occ.split(" "))
+            if "/" in occ:
+                return tuple(occ.split("/"))
+            return (occ,) if occ else ()
+        return (str(occ),)
+
+    t1 = to_id_tuple(occ1)
+    t2 = to_id_tuple(occ2)
+
+    n1, n2 = len(t1), len(t2)
+    min_n = min(n1, n2)
+    if min_n == 0:
+        return n1 == n2
+
+    return t1[-min_n:] == t2[-min_n:]
 
 
 class CondensedRobot(Robot):
@@ -271,20 +306,109 @@ class CondensedRobot(Robot):
                     continue
 
                 # Calculate World transform of joint (mate connector)
-                # matedEntities[0] is the parent entity in the toolkit's KinematicGraph
+                # Choose the mate entity that belongs to the current (parent) link's occurrences
                 try:
-                    parent_entity = mate.matedEntities[0]
-                    # Find the part in cad.parts that matches the occurrence
-                    parent_occ = parent_entity.matedOccurrence
-                    # We need the world transform of this part
-                    # In our case, payloads might already have it if cad was provided
-                    parent_part_world = np.eye(4)
-                    if cad and hasattr(cad, "parts"):
-                        # Search for part with matching occurrence
-                        for part in cad.parts.values():
-                            if getattr(part, "occurrence", None) == parent_occ:
-                                parent_part_world = _part_world_matrix(part)
+                    parent_entity = None
+                    matched_world_occ = None
+                    child_link = link_to_rec.get(next_name)
+                    parent_occs = getattr(curr_link, "occurrences", None) or []
+                    child_occs = getattr(child_link, "occurrences", None) or []
+                    if parent_occs or child_occs:
+                        parent_candidates = []
+                        for entity in mate.matedEntities:
+                            entity_occ = getattr(entity, "matedOccurrence", None)
+                            parent_match = any(
+                                occ_match(entity_occ, occ) for occ in parent_occs
+                            )
+                            child_match = any(
+                                occ_match(entity_occ, occ) for occ in child_occs
+                            )
+                            if parent_match and not child_match:
+                                # Strongest candidate: in parent link but not in child link
+                                parent_candidates.insert(0, (entity, entity_occ))
+                            elif parent_match:
+                                # Second best: in parent link
+                                parent_candidates.append((entity, entity_occ))
+
+                        if parent_candidates:
+                            parent_entity, entity_occ = parent_candidates[0]
+                            for occ in parent_occs:
+                                if occ_match(entity_occ, occ):
+                                    matched_world_occ = occ
+                                    break
+
+                    if parent_entity is None:
+                        # Fallback to first entity if matching fails
+                        parent_entity = mate.matedEntities[0]
+                        parent_occ = parent_entity.matedOccurrence
+                    else:
+                        # Use the matched world-level occurrence for better part finding
+                        parent_occ = matched_world_occ
+
+                    # Resolve to a PathKey when possible (cad.parts keys are PathKey)
+                    parent_key = None
+                    if parent_occ is not None:
+                        if hasattr(parent_occ, "path") and hasattr(
+                            parent_occ, "name_path"
+                        ):
+                            parent_key = parent_occ
+                        elif (
+                            isinstance(parent_occ, (list, tuple))
+                            and cad
+                            and hasattr(cad, "keys_by_id")
+                        ):
+                            parent_key = cad.keys_by_id.get(tuple(parent_occ))
+                        elif (
+                            isinstance(parent_occ, str)
+                            and cad
+                            and hasattr(cad, "keys_by_name")
+                        ):
+                            for key in cad.keys_by_name.values():
+                                if "_".join(key.name_path) == parent_occ:
+                                    parent_key = key
+                                    break
+
+                    if parent_key is None and cad and hasattr(cad, "keys_by_name"):
+                        for key in cad.keys_by_name.values():
+                            if occ_match(key.path, parent_occ) or occ_match(
+                                key.name_path, parent_occ
+                            ):
+                                parent_key = key
                                 break
+
+                    # We need the world transform of this part
+                    parent_part_world = np.eye(4)
+                    found_part = False
+                    if cad and hasattr(cad, "get_occurrence_tf"):
+                        try:
+                            parent_part_world = cad.get_occurrence_tf(
+                                parent_key or parent_occ
+                            )
+                            found_part = True
+                        except Exception:
+                            found_part = False
+
+                    if not found_part and cad and hasattr(cad, "parts"):
+                        # Search for part with matching occurrence (cad.parts keyed by PathKey)
+                        if parent_key is not None and parent_key in cad.parts:
+                            parent_part_world = _part_world_matrix(
+                                cad.parts[parent_key]
+                            )
+                            found_part = True
+                        else:
+                            for key, part in cad.parts.items():
+                                if occ_match(key.path, parent_occ) or occ_match(
+                                    key.name_path, parent_occ
+                                ):
+                                    parent_part_world = _part_world_matrix(part)
+                                    found_part = True
+                                    break
+
+                    if not found_part and cad:
+                        logger.warning(
+                            f"Could not find part for occurrence {parent_occ} "
+                            f"(joint: {getattr(mate, 'name', 'unknown')}, links: {curr_name} -> {next_name})"
+                        )
 
                     T_PJ = parent_entity.matedCS.to_tf
                     T_WJ = parent_part_world @ T_PJ
