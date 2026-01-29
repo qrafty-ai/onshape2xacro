@@ -488,7 +488,7 @@ def split_step_to_meshes(
                 rel_loc = _relative_location(part_loc, link_loc)
                 builder.Add(compound, shape.Located(rel_loc))
 
-        BRepMesh_IncrementalMesh(compound, 0.001)
+        BRepMesh_IncrementalMesh(compound, 0.01)
         out_path = mesh_dir / f"{link_name}.stl"
         stl_writer.Write(compound, str(out_path))
         mesh_map[link_name] = out_path.name
@@ -502,10 +502,12 @@ class StepMeshExporter:
         client: Client | None,
         cad: Any,
         asset_path: Path | None = None,
+        deflection: float = 0.01,
     ):
         self.client = client
         self.cad = cad
         self.asset_path = asset_path
+        self.deflection = deflection
 
     def export_step(self, output_path: Path) -> Path:
         if self.client is None:
@@ -526,7 +528,7 @@ class StepMeshExporter:
             f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/translations",
             body={
                 "formatName": "STEP",
-                "stepUnit": "METER",
+                "stepUnit": "MILLIMETER",
                 "stepVersionString": "AP242",
                 "storeInDocument": False,
                 "includeExportIds": True,
@@ -723,7 +725,7 @@ class StepMeshExporter:
                     missing_meshes[link_name] = link_missing_parts
 
                 if has_valid_shapes:
-                    BRepMesh_IncrementalMesh(compound, 0.001)
+                    BRepMesh_IncrementalMesh(compound, self.deflection)
                     out_path = mesh_dir / f"{link_name}.stl"
                     stl_writer.Write(compound, str(out_path))
                     mesh_map[link_name] = out_path.name
@@ -1016,7 +1018,7 @@ class StepMeshExporter:
                 missing_meshes[link_name] = link_missing_parts
 
             if has_valid_shapes:
-                BRepMesh_IncrementalMesh(compound, 0.001)
+                BRepMesh_IncrementalMesh(compound, self.deflection)
                 out_path = mesh_dir / f"{link_name}.stl"
                 stl_writer.Write(compound, str(out_path))
                 mesh_map[link_name] = out_path.name

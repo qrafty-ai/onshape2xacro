@@ -322,6 +322,7 @@ class XacroSerializer(RobotSerializer):
                 geom = ET.SubElement(el, "geometry")
                 mesh = ET.SubElement(geom, "mesh")
                 mesh.set("filename", f"{mesh_rel_path}/{mesh_map[name]}")
+                mesh.set("scale", "0.001 0.001 0.001")
 
     def _joint_to_xacro(
         self,
