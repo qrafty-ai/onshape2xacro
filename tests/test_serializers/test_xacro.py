@@ -1,6 +1,8 @@
 import pytest
 import networkx as nx
+import numpy as np
 from types import SimpleNamespace
+from onshape_robotics_toolkit.models.link import Origin
 from onshape2xacro.naming import sanitize_name
 from onshape2xacro.serializers import XacroSerializer
 from onshape2xacro.condensed_robot import LinkRecord, JointRecord
@@ -38,8 +40,12 @@ def test_xacro_uses_link_mesh_map(tmp_path):
 
     robot = nx.DiGraph()
     robot.name = "r"
-    robot.add_node(node_a, data=LinkRecord("link_a", ["pA"], [["A"]], ["A"]))
-    robot.add_node(node_b, data=LinkRecord("link_b", ["pB"], [["B"]], ["B"]))
+    robot.add_node(
+        node_a, data=LinkRecord("link_a", ["pA"], [["A"]], ["A"], keys=["pA"])
+    )
+    robot.add_node(
+        node_b, data=LinkRecord("link_b", ["pB"], [["B"]], ["B"], keys=["pB"])
+    )
 
     joint_mate = SimpleNamespace(name="joint_revolute", mateType="REVOLUTE")
     joint = JointRecord(
@@ -49,10 +55,10 @@ def test_xacro_uses_link_mesh_map(tmp_path):
 
     serializer = XacroSerializer()
     # Mock _export_meshes to avoid API calls and StepMeshExporter requirements
-    serializer._export_meshes = lambda robot, mesh_dir: {
-        "link_a": "link_a.stl",
-        "link_b": "link_b.stl",
-    }
+    serializer._export_meshes = lambda robot, mesh_dir: (
+        {"link_a": "link_a.stl", "link_b": "link_b.stl"},
+        {},
+    )
 
     out = tmp_path / "output"
     serializer.save(robot, str(out), download_assets=True)
@@ -65,3 +71,65 @@ def test_xacro_uses_link_mesh_map(tmp_path):
         assert "link_a.stl" in content
         assert "link_b.stl" in content
         assert 'name="${prefix}revolute"' in content
+
+
+def test_xacro_joint_origin(tmp_path):
+    class MockNode:
+        def __init__(self, name, parent=None):
+            self.name = name
+            self.parent = parent
+
+    node_a = MockNode("link_a")
+    node_b = MockNode("link_b")
+
+    robot = nx.DiGraph()
+    robot.name = "r"
+    robot.add_node(
+        node_a, data=LinkRecord("link_a", ["pA"], [["A"]], ["A"], keys=["pA"])
+    )
+    robot.add_node(
+        node_b, data=LinkRecord("link_b", ["pB"], [["B"]], ["B"], keys=["pB"])
+    )
+
+    # Create specific origin (x=1, y=2, z=3, 90 deg rotation around X)
+    mat = np.eye(4)
+    mat[0, 3] = 1.0
+    mat[1, 3] = 2.0
+    mat[2, 3] = 3.0
+    mat[1, 1] = 0
+    mat[1, 2] = -1
+    mat[2, 1] = 1
+    mat[2, 2] = 0
+
+    origin = Origin.from_matrix(mat)
+
+    joint_mate = SimpleNamespace(name="joint_revolute", mateType="REVOLUTE")
+    joint = JointRecord(
+        "joint_revolute",
+        "REVOLUTE",
+        "link_a",
+        "link_b",
+        None,
+        joint_mate,
+        origin=origin,
+    )
+    robot.add_edge(node_a, node_b, data=joint)
+
+    serializer = XacroSerializer()
+    serializer._export_meshes = lambda robot, mesh_dir: (
+        {"link_a": "link_a.stl", "link_b": "link_b.stl"},
+        {},
+    )
+
+    out = tmp_path / "output"
+    serializer.save(robot, str(out), download_assets=True)
+
+    with open(out / "urdf" / "r.xacro", "r") as f:
+        content = f.read()
+        # Verify joint origin
+        assert 'xyz="1.0 2.0 3.0"' in content
+        assert 'rpy="1.57079' in content
+
+        # Check visual/collision origins for links are "0 0 0" when mesh_map is present
+        # Both link_a and link_b should have identity origins for their visuals/collisions
+        assert content.count('<origin xyz="0 0 0" rpy="0 0 0"/>') >= 4
