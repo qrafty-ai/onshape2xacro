@@ -176,11 +176,25 @@ class CondensedRobot(Robot):
                 getattr(p, "part_name", str(n)) for p, n in zip(payloads, group_nodes)
             ]
 
-            # Create link name
-            sanitized_names = sorted(
-                list(set(sanitize_name(n) for n in part_names if n))
-            )
-            link_name = "_".join(sanitized_names)
+            # Pick link name based on heaviest part
+            max_mass = None
+            heaviest_name = part_names[0] if part_names else ""
+            for p, name in zip(payloads, part_names):
+                mp = getattr(p, "mass_properties", None)
+                if mp is None:
+                    continue
+                mass = getattr(mp, "mass", None)
+                if mass is None:
+                    continue
+                try:
+                    mass_value = float(mass)
+                except (TypeError, ValueError):
+                    continue
+                if max_mass is None or mass_value > max_mass:
+                    max_mass = mass_value
+                    heaviest_name = name
+
+            link_name = sanitize_name(heaviest_name)
             if len(link_name) > 128:
                 h = hashlib.md5(link_name.encode()).hexdigest()[:8]
                 link_name = f"{link_name[:119]}_{h}"
