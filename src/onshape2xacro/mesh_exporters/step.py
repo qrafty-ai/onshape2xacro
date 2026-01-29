@@ -29,14 +29,14 @@ EXPORT_ID_REGEX = re.compile(
 INSTANCE_SUFFIX_REGEX = re.compile(r"^(?P<base>.+?)\s*<(?P<index>\d+)>$")
 
 
-def _get_shape_tool(doc: TDocStd_Document):
+def _get_shape_tool(doc: Any):
     shape_tool = getattr(XCAFDoc_DocumentTool, "ShapeTool_s", None)
     if callable(shape_tool):
         return shape_tool(doc.Main())
     return XCAFDoc_DocumentTool.ShapeTool(doc.Main())
 
 
-def _label_name(label: TDF_Label) -> str:
+def _label_name(label: Any) -> str:
     def _name_id():
         get_id = getattr(TDataStd_Name, "GetID_s", None)
         if callable(get_id):
@@ -143,6 +143,10 @@ def _matrix_to_trsf(matrix: np.ndarray) -> gp_Trsf:
         matrix[2][3],
     )
     return trsf
+
+
+def _matrix_to_loc(matrix: np.ndarray) -> TopLoc_Location:
+    return TopLoc_Location(_matrix_to_trsf(matrix))
 
 
 def _get_label_location(shape_tool: Any, label: TDF_Label) -> TopLoc_Location:
@@ -438,6 +442,8 @@ class StepMeshExporter:
                 "stepUnit": "METER",
                 "stepVersionString": "AP242",
                 "storeInDocument": False,
+                "grouping": True,
+                "includeExportIds": True,
             },
         )
         response.raise_for_status()
@@ -487,13 +493,108 @@ class StepMeshExporter:
         """
         mesh_dir.mkdir(parents=True, exist_ok=True)
         if self.asset_path and self.asset_path.exists():
-            archive_path = self.asset_path
+            asset_path = self.asset_path
         else:
-            archive_path = mesh_dir / "assembly.zip"
-            self.export_step(archive_path)
+            asset_path = mesh_dir / "assembly.step"
+            self.export_step(asset_path)
 
-        shapes_by_name = _load_step_shapes_from_zip(archive_path)
-        export_name_by_key = _map_keys_to_export_names(self.cad)
+        if asset_path.suffix.lower() == ".zip":
+            # For backward compatibility if 'asset_path' ends in '.zip'
+            shapes_by_name = _load_step_shapes_from_zip(asset_path)
+            export_name_by_key = _map_keys_to_export_names(self.cad)
+
+            stl_writer = StlAPI_Writer()
+            mesh_map: Dict[str, str] = {}
+            missing_meshes: Dict[str, List[Dict[str, str]]] = {}
+
+            for link_name, link in link_records.items():
+                keys = link.keys
+                if not keys:
+                    continue
+
+                valid_keys = [
+                    k
+                    for k in keys
+                    if self.cad.parts.get(k)
+                    and not getattr(self.cad.parts[k], "isRigidAssembly", False)
+                ]
+                if not valid_keys:
+                    continue
+
+                link_world = getattr(link, "frame_transform", None)
+                if link_world is None:
+                    ref_key = valid_keys[0]
+                    link_world = _part_world_matrix(self.cad.parts[ref_key])
+
+                link_world_inv = np.linalg.inv(link_world)
+
+                compound = TopoDS_Compound()
+                builder = BRep_Builder()
+                builder.MakeCompound(compound)
+                link_missing_parts: List[Dict[str, str]] = []
+                has_valid_shapes = False
+
+                for key in keys:
+                    part = self.cad.parts.get(key)
+                    if part is None or getattr(part, "isRigidAssembly", False):
+                        continue
+
+                    export_name = export_name_by_key.get(key)
+                    shape = shapes_by_name.get(export_name) if export_name else None
+
+                    if shape is None:
+                        link_missing_parts.append(
+                            {
+                                "part_id": getattr(part, "partId", str(key)),
+                                "export_name": export_name or "unknown",
+                                "part_name": getattr(part, "name", "unknown"),
+                                "reason": f"STEP file '{export_name}' not found in zip"
+                                if export_name
+                                else "no export name mapping",
+                            }
+                        )
+                        continue
+
+                    part_world = _part_world_matrix(part)
+                    link_from_part = link_world_inv @ part_world
+                    trsf = _matrix_to_trsf(link_from_part)
+                    transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
+                    builder.Add(compound, transformed)
+                    has_valid_shapes = True
+
+                if link_missing_parts:
+                    missing_meshes[link_name] = link_missing_parts
+
+                if has_valid_shapes:
+                    BRepMesh_IncrementalMesh(compound, 0.001)
+                    out_path = mesh_dir / f"{link_name}.stl"
+                    stl_writer.Write(compound, str(out_path))
+                    mesh_map[link_name] = out_path.name
+
+            return mesh_map, missing_meshes
+
+        # Primary logic for single STEP file
+        doc = TDocStd_Document(TCollection_ExtendedString("step"))
+        reader = STEPCAFControl_Reader()
+        reader.SetNameMode(True)
+        status = reader.ReadFile(str(asset_path))
+        if status != IFSelect_RetDone:
+            raise RuntimeError(f"STEP read failed with status {status}: {asset_path}")
+
+        reader.Transfer(doc)
+        shape_tool = _get_shape_tool(doc)
+        labels = _get_free_shape_labels(shape_tool)
+
+        part_shapes: Dict[str, Any] = {}
+        part_locations: Dict[str, TopLoc_Location] = {}
+        for i in range(labels.Length()):
+            _collect_shapes(
+                shape_tool,
+                labels.Value(i + 1),
+                TopLoc_Location(),
+                part_shapes,
+                part_locations,
+            )
 
         stl_writer = StlAPI_Writer()
         mesh_map: Dict[str, str] = {}
@@ -504,27 +605,23 @@ class StepMeshExporter:
             if not keys:
                 continue
 
-            # Filter out rigid assemblies and non-existent parts
-            valid_keys = []
-            for key in keys:
-                part = self.cad.parts.get(key)
-                if part is None:
-                    continue
-                if getattr(part, "isRigidAssembly", False):
-                    continue
-                valid_keys.append(key)
-
-            if not valid_keys:
-                continue
-
             # Link frame transform (World to Link)
-            # If LinkRecord has frame_transform, use it. Otherwise fallback to first part.
-            link_world = getattr(link, "frame_transform", None)
-            if link_world is None:
-                ref_key = valid_keys[0]
-                link_world = _part_world_matrix(self.cad.parts[ref_key])
-
-            link_world_inv = np.linalg.inv(link_world)
+            link_matrix = getattr(link, "frame_transform", None)
+            if link_matrix is not None:
+                link_loc = _matrix_to_loc(link_matrix)
+            else:
+                # Fallback to first part's location from STEP
+                link_loc = None
+                for key in keys:
+                    part = self.cad.parts.get(key)
+                    if part is None or getattr(part, "isRigidAssembly", False):
+                        continue
+                    part_id = getattr(part, "partId", str(key))
+                    if part_id in part_locations:
+                        link_loc = part_locations[part_id]
+                        break
+                if link_loc is None:
+                    link_loc = TopLoc_Location()
 
             compound = TopoDS_Compound()
             builder = BRep_Builder()
@@ -534,50 +631,26 @@ class StepMeshExporter:
 
             for key in keys:
                 part = self.cad.parts.get(key)
-                if part is None:
-                    link_missing_parts.append(
-                        {
-                            "part_id": str(key),
-                            "export_name": "unknown",
-                            "part_name": "unknown",
-                            "reason": "key not found in CAD parts",
-                        }
-                    )
+                if part is None or getattr(part, "isRigidAssembly", False):
                     continue
 
-                if getattr(part, "isRigidAssembly", False):
-                    continue
+                part_id = getattr(part, "partId", str(key))
+                shape = part_shapes.get(part_id)
+                part_loc = part_locations.get(part_id)
 
-                export_name = export_name_by_key.get(key)
-                if not export_name:
+                if shape is None or part_loc is None:
                     link_missing_parts.append(
                         {
-                            "part_id": getattr(part, "partId", str(key)),
-                            "export_name": "unknown",
+                            "part_id": part_id,
+                            "export_name": "N/A",
                             "part_name": getattr(part, "name", "unknown"),
-                            "reason": "no export name mapping found",
+                            "reason": f"Part ID {part_id} not found in STEP",
                         }
                     )
                     continue
 
-                shape = shapes_by_name.get(export_name)
-                if shape is None:
-                    link_missing_parts.append(
-                        {
-                            "part_id": getattr(part, "partId", str(key)),
-                            "export_name": export_name,
-                            "part_name": getattr(part, "name", "unknown"),
-                            "reason": f"STEP file '{export_name}' not found in zip",
-                        }
-                    )
-                    continue
-
-                # Compute transform: link_world_inv * part_world
-                part_world = _part_world_matrix(part)
-                link_from_part = link_world_inv @ part_world
-                trsf = _matrix_to_trsf(link_from_part)
-                transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
-                builder.Add(compound, transformed)
+                rel_loc = _relative_location(part_loc, link_loc)
+                builder.Add(compound, shape.Located(rel_loc))
                 has_valid_shapes = True
 
             if link_missing_parts:

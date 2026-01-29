@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
+import numpy as np
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
+from onshape_robotics_toolkit.models.assembly import Occurrence
 from onshape2xacro.condensed_robot import CondensedRobot
 from onshape2xacro.serializers import XacroSerializer
 from onshape2xacro.config import ConfigOverride
@@ -18,6 +20,18 @@ from onshape2xacro.auth import (
     delete_credentials,
     has_stored_credentials,
 )
+
+
+# Monkeypatch Occurrence.tf to handle Onshape's column-major transformation arrays.
+# The toolkit currently uses .reshape(4, 4) which defaults to row-major,
+# transposing the matrix and losing the translation components.
+def _fixed_occurrence_tf(self):
+    return np.array(self.transform).reshape(4, 4, order="F")
+
+
+# Use setattr to bypass property setter checks if needed,
+# though re-assigning the property on the class should work.
+setattr(Occurrence, "tf", property(_fixed_occurrence_tf))
 
 
 def _get_client_and_cad(url: str, max_depth: int) -> tuple[Client, CAD]:
