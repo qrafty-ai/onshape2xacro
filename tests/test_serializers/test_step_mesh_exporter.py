@@ -1,5 +1,9 @@
 from pathlib import Path
-from onshape2xacro.mesh_exporters.step import StepMeshExporter, split_step_to_meshes
+from onshape2xacro.mesh_exporters.step import (
+    StepMeshExporter,
+    split_step_to_meshes,
+    _is_step_payload,
+)
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 from OCP.STEPCAFControl import STEPCAFControl_Writer
 from OCP.TDocStd import TDocStd_Document
@@ -32,6 +36,26 @@ def make_step(tmp_path: Path) -> Path:
     except AttributeError:
         TDataStd_Name.Set(label1, TCollection_ExtendedString("export:pA"))
         TDataStd_Name.Set(label2, TCollection_ExtendedString("export:pB"))
+
+    writer = STEPCAFControl_Writer()
+    writer.Transfer(doc, STEPControl_AsIs)
+    out = tmp_path / "assembly.step"
+    assert writer.Write(str(out)) == 1
+    return out
+
+
+def make_step_without_ids(tmp_path: Path) -> Path:
+    doc = TDocStd_Document(TCollection_ExtendedString("step"))
+    try:
+        shape_tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    except AttributeError:
+        shape_tool = XCAFDoc_DocumentTool.ShapeTool(doc.Main())
+
+    box1 = BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape()
+    box2 = BRepPrimAPI_MakeBox(2.0, 1.0, 1.0).Shape()
+
+    shape_tool.AddShape(box1)
+    shape_tool.AddShape(box2)
 
     writer = STEPCAFControl_Writer()
     writer.Transfer(doc, STEPControl_AsIs)
@@ -74,7 +98,7 @@ def test_export_step_uses_workspace_id(tmp_path: Path):
 
         def request(self, method, path, **kwargs):
             self.paths.append(path)
-            if path.endswith("/export/step"):
+            if path.endswith("/translations"):
                 self.bodies.append(kwargs.get("body"))
                 return DummyResponse({"id": "t1"})
             if path.startswith("/api/translations/"):
@@ -89,11 +113,127 @@ def test_export_step_uses_workspace_id(tmp_path: Path):
 
     assert exporter.client.paths
     assert f"/{DummyCad.wtype}/{DummyCad.workspace_id}/" in exporter.client.paths[0]
-    assert exporter.client.paths[0].endswith("/export/step")
+    assert exporter.client.paths[0].endswith("/translations")
     assert exporter.client.bodies
-    assert exporter.client.bodies[0]["stepUnit"] == "METER"
+    assert exporter.client.bodies[0]["formatName"] == "STEP"
     assert exporter.client.bodies[0]["stepVersionString"] == "AP242"
     assert exporter.client.bodies[0]["storeInDocument"] is False
+    assert exporter.client.bodies[0]["includeExportIds"] is True
+    assert exporter.client.bodies[0]["extractAssemblyHierarchy"] is True
+    assert exporter.client.bodies[0]["flattenAssemblies"] is False
+
+
+def test_export_step_extracts_step_from_zip(tmp_path: Path):
+    class DummyCad:
+        document_id = "doc123"
+        wtype = "w"
+        workspace_id = "ws456"
+        element_id = "elem789"
+
+    class DummyResponse:
+        def __init__(self, payload=None, content=b""):
+            self._payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class DummyClient:
+        def __init__(self):
+            self.paths = []
+            self.bodies = []
+
+        def request(self, method, path, **kwargs):
+            self.paths.append(path)
+            if path.endswith("/translations"):
+                self.bodies.append(kwargs.get("body"))
+                return DummyResponse({"id": "t1"})
+            if path.startswith("/api/translations/"):
+                return DummyResponse(
+                    {
+                        "requestState": "DONE",
+                        "resultExternalDataIds": ["f_manifest", "f_zip"],
+                    }
+                )
+
+            if path.endswith("/externaldata/f_manifest"):
+                return DummyResponse(content=b'<?xml version="1.0"?><manifest />')
+
+            if path.endswith("/externaldata/f_zip"):
+                import io
+                import zipfile
+
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr("assembly.step", "ISO-10303-21;\nEND-ISO-10303-21;")
+                return DummyResponse(content=buf.getvalue())
+
+            return DummyResponse({}, content=b"")
+
+    exporter = StepMeshExporter(DummyClient(), DummyCad())
+    output_path = tmp_path / "assembly.step"
+    exporter.export_step(output_path)
+
+    contents = output_path.read_text()
+    assert contents.startswith("ISO-10303-21")
+
+
+def test_export_step_uses_translation_download_when_only_xml(tmp_path: Path):
+    class DummyCad:
+        document_id = "doc123"
+        wtype = "w"
+        workspace_id = "ws456"
+        element_id = "elem789"
+
+    class DummyResponse:
+        def __init__(self, payload=None, content=b""):
+            self._payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class DummyClient:
+        def __init__(self):
+            self.paths = []
+
+        def request(self, method, path, **kwargs):
+            self.paths.append(path)
+            if path.endswith("/translations"):
+                return DummyResponse({"id": "t1"})
+            if path.startswith("/api/translations/") and path.endswith("/download"):
+                import io
+                import zipfile
+
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr("assembly.step", "ISO-10303-21;\nEND-ISO-10303-21;")
+                return DummyResponse(content=buf.getvalue())
+            if path.startswith("/api/translations/"):
+                return DummyResponse(
+                    {"requestState": "DONE", "resultExternalDataIds": ["f_xml"]}
+                )
+            if path.endswith("/externaldata/f_xml"):
+                return DummyResponse(content=b'<?xml version="1.0"?><TreeNode />')
+            return DummyResponse({}, content=b"")
+
+    exporter = StepMeshExporter(DummyClient(), DummyCad())
+    output_path = tmp_path / "assembly.step"
+    exporter.export_step(output_path)
+
+    contents = output_path.read_text()
+    assert contents.startswith("ISO-10303-21")
+
+
+def test_is_step_payload_detects_invalid_header():
+    assert _is_step_payload(b'<?xml version="1.0"?><TreeNode />') is False
+    assert _is_step_payload(b"ISO-10303-21;\nEND-ISO-10303-21;") is True
 
 
 @dataclass
@@ -209,3 +349,87 @@ def test_export_link_meshes_integration(tmp_path: Path):
         assert (tmp_path / "meshes" / "link1.stl").exists()
     finally:
         step_mod._load_step_shapes_from_zip = original_load
+
+
+def test_export_link_meshes_reexports_when_missing_ids(tmp_path: Path):
+    # Initial STEP file without export IDs
+    no_id_step = make_step_without_ids(tmp_path)
+
+    class DummyCad:
+        def __init__(self):
+            self.parts = {
+                "k1": DummyPart(partId="pA", name="PartA"),
+                "k2": DummyPart(partId="pB", name="PartB"),
+            }
+            self.instances = {}
+            self.document_id = "doc"
+            self.wtype = "w"
+            self.workspace_id = "ws"
+            self.element_id = "elem"
+
+    class DummyLink:
+        def __init__(self, keys):
+            self.keys = keys
+            self.frame_transform = None
+
+    class DummyExporter(StepMeshExporter):
+        def __init__(self, cad: DummyCad, asset_path: Path):
+            super().__init__(client=None, cad=cad, asset_path=asset_path)
+            self.export_called = False
+
+        def export_step(self, output_path: Path):
+            self.export_called = True
+            # Re-export with IDs so parsing can succeed
+            make_step(output_path.parent)
+
+    exporter = DummyExporter(DummyCad(), no_id_step)
+    link_records = {"link": DummyLink(["k1", "k2"])}
+
+    mesh_map, missing = exporter.export_link_meshes(link_records, tmp_path)
+
+    assert exporter.export_called is True
+    assert "link" in mesh_map
+    assert missing == {}
+
+
+def test_export_step_raises_when_only_xml_everywhere(tmp_path: Path):
+    class DummyCad:
+        document_id = "doc123"
+        wtype = "w"
+        workspace_id = "ws456"
+        element_id = "elem789"
+
+    class DummyResponse:
+        def __init__(self, payload=None, content=b""):
+            self._payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class DummyClient:
+        def __init__(self):
+            self.paths = []
+
+        def request(self, method, path, **kwargs):
+            self.paths.append(path)
+            if path.endswith("/translations"):
+                return DummyResponse({"id": "t1"})
+            if path.startswith("/api/translations/") and path.endswith("/download"):
+                return DummyResponse(content=b'<?xml version="1.0"?><TreeNode />')
+            if path.startswith("/api/translations/"):
+                return DummyResponse(
+                    {"requestState": "DONE", "resultExternalDataIds": ["f_xml"]}
+                )
+            if path.endswith("/externaldata/f_xml"):
+                return DummyResponse(content=b'<?xml version="1.0"?><TreeNode />')
+            return DummyResponse({}, content=b"")
+
+    exporter = StepMeshExporter(DummyClient(), DummyCad())
+    import pytest
+
+    with pytest.raises(RuntimeError, match="No STEP content"):
+        exporter.export_step(tmp_path / "assembly.step")

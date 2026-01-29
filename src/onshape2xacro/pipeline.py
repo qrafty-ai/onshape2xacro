@@ -59,6 +59,20 @@ def _get_client_and_cad(url: str, max_depth: int) -> tuple[Client, CAD]:
     return client, cad
 
 
+def _try_get_client() -> Client | None:
+    access_key, secret_key = get_credentials()
+    if not access_key or not secret_key:
+        return None
+
+    os.environ["ONSHAPE_ACCESS_KEY"] = access_key
+    os.environ["ONSHAPE_SECRET_KEY"] = secret_key
+
+    return Client(
+        env=None,
+        base_url="https://cad.onshape.com",
+    )
+
+
 def run_export(config: ExportConfig):
     """Run the complete export pipeline."""
     url_path = Path(config.url)
@@ -68,7 +82,7 @@ def run_export(config: ExportConfig):
         print(f"Loading pre-fetched CAD data from {url_path}...")
         with open(url_path / "cad.pickle", "rb") as f:
             cad = pickle.load(f)
-        client = None
+        client = _try_get_client()
         # Check for assembly.step (new format) or assembly.zip (old format)
         if (url_path / "assembly.step").exists():
             asset_path = url_path / "assembly.step"

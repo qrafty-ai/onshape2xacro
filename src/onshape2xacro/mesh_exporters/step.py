@@ -1,3 +1,4 @@
+import io
 import re
 import tempfile
 import time
@@ -11,7 +12,7 @@ from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TDocStd import TDocStd_Document
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.XCAFDoc import XCAFDoc_DocumentTool
-from OCP.TDataStd import TDataStd_Name
+from OCP.TDataStd import TDataStd_Name, TDataStd_NamedData
 from OCP.TDF import TDF_Label, TDF_LabelSequence
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.TopLoc import TopLoc_Location
@@ -59,11 +60,53 @@ def _label_name(label: Any) -> str:
     return ""
 
 
+def _get_named_data(label: Any) -> TDataStd_NamedData | None:
+    get_id = getattr(TDataStd_NamedData, "GetID_s", None)
+    if callable(get_id):
+        attr_id = get_id()
+    else:
+        attr_id = TDataStd_NamedData.GetID()
+    named = TDataStd_NamedData()
+    if label.FindAttribute(attr_id, named):
+        return named
+    return None
+
+
+def _named_data_value(named: TDataStd_NamedData, key: str) -> str | None:
+    get_val = getattr(named, "GetString", None)
+    if callable(get_val):
+        value = get_val(TCollection_ExtendedString(key))
+        if not value.IsEmpty():
+            return value.ToExtString()
+    return None
+
+
+def _get_occurrence_id(label: Any) -> str | None:
+    named = _get_named_data(label)
+    if named is not None:
+        for key in ("occurrenceId", "onshape:occurrenceId", "OCCURRENCE_ID"):
+            value = _named_data_value(named, key)
+            if value:
+                return value
+
+    name = _label_name(label)
+    return _parse_export_id(name)
+
+
 def _parse_export_id(label_name: str) -> str:
     match = EXPORT_ID_REGEX.search(label_name or "")
     if match:
         return match.group(1)
     return ""
+
+
+def _is_step_payload(content: bytes) -> bool:
+    return content.lstrip().startswith(b"ISO-10303-21")
+
+
+def _read_file_header(path: Path, max_bytes: int = 512) -> bytes:
+    with path.open("rb") as handle:
+        return handle.read(max_bytes)
 
 
 def _export_name_from_instance_name(instance_name: str) -> str:
@@ -213,29 +256,51 @@ def _collect_shapes(
     shape_tool: Any,
     label: TDF_Label,
     parent_loc: TopLoc_Location,
-    part_shapes: Dict[str, Any],
-    part_locations: Dict[str, TopLoc_Location],
+    part_shapes: Dict[Any, Any],
+    part_locations: Dict[Any, TopLoc_Location],
+    current_path: Tuple[str, ...] = (),
 ):
     is_assembly = getattr(shape_tool, "IsAssembly_s", None)
     if not callable(is_assembly):
         is_assembly = getattr(shape_tool, "IsAssembly", None)
+
     if callable(is_assembly) and is_assembly(label):
         for comp in _iter_components(shape_tool, label):
             comp_loc = _combine_locations(
                 parent_loc, _get_label_location(shape_tool, comp)
             )
+
+            # Extract occurrence ID from instance label or NamedData; fallback to label name
+            occ_id = _get_occurrence_id(comp) or _label_name(comp)
+
             ref_label = TDF_Label()
             get_ref = getattr(shape_tool, "GetReferredShape_s", None)
             if not callable(get_ref):
                 get_ref = getattr(shape_tool, "GetReferredShape", None)
+
             if callable(get_ref) and get_ref(comp, ref_label):
+                new_path = current_path + (occ_id,) if occ_id else current_path
                 _collect_shapes(
-                    shape_tool, ref_label, comp_loc, part_shapes, part_locations
+                    shape_tool,
+                    ref_label,
+                    comp_loc,
+                    part_shapes,
+                    part_locations,
+                    new_path,
                 )
             else:
-                _collect_shapes(shape_tool, comp, comp_loc, part_shapes, part_locations)
+                # If no reference, just recurse on the component itself
+                _collect_shapes(
+                    shape_tool,
+                    comp,
+                    comp_loc,
+                    part_shapes,
+                    part_locations,
+                    current_path,
+                )
         return
 
+    # Leaf part or subassembly treated as a shape
     shape_label = label
     ref_label = TDF_Label()
     get_ref = getattr(shape_tool, "GetReferredShape_s", None)
@@ -243,11 +308,6 @@ def _collect_shapes(
         get_ref = getattr(shape_tool, "GetReferredShape", None)
     if callable(get_ref) and get_ref(label, ref_label):
         shape_label = ref_label
-
-    name = _label_name(label) or _label_name(shape_label)
-    part_id = _parse_export_id(name)
-    if not part_id:
-        return
 
     get_shape = getattr(shape_tool, "GetShape_s", None)
     if not callable(get_shape):
@@ -259,8 +319,21 @@ def _collect_shapes(
     if shape.IsNull():
         return
 
-    part_shapes[part_id] = shape
-    part_locations[part_id] = parent_loc
+    # Store by full occurrence path (tuple of IDs)
+    part_shapes[current_path] = shape
+    part_locations[current_path] = parent_loc
+
+    # Also store by individual part ID and occurrence ID for fallbacks
+    parsed_id = _get_occurrence_id(label) or _get_occurrence_id(shape_label)
+    if parsed_id:
+        if parsed_id not in part_shapes:
+            part_shapes[parsed_id] = shape
+            part_locations[parsed_id] = parent_loc
+
+    label_name = _label_name(label) or _label_name(shape_label)
+    if label_name and label_name not in part_shapes:
+        part_shapes[label_name] = shape
+        part_locations[label_name] = parent_loc
 
 
 def _get_free_shape_labels(shape_tool: Any) -> TDF_LabelSequence:
@@ -437,13 +510,15 @@ class StepMeshExporter:
 
         response = self.client.request(
             HTTP.POST,
-            f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/export/step",
+            f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/translations",
             body={
+                "formatName": "STEP",
                 "stepUnit": "METER",
                 "stepVersionString": "AP242",
                 "storeInDocument": False,
-                "grouping": True,
                 "includeExportIds": True,
+                "extractAssemblyHierarchy": False,
+                "flattenAssemblies": False,
             },
         )
         response.raise_for_status()
@@ -469,16 +544,75 @@ class StepMeshExporter:
         if not external_ids:
             raise RuntimeError("No external data ids returned for STEP translation")
 
-        file_id = external_ids[0]
-        download = self.client.request(
-            HTTP.GET,
-            f"/api/documents/d/{did}/externaldata/{file_id}",
-            headers={"Accept": "application/octet-stream"},
-            log_response=False,
+        def _extract_step_from_content(raw: bytes) -> bytes | None:
+            content = raw
+            if zipfile.is_zipfile(io.BytesIO(content)):
+                with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                    step_files = [
+                        n
+                        for n in zf.namelist()
+                        if n.lower().endswith((".step", ".stp"))
+                    ]
+                    if step_files:
+                        step_files.sort(
+                            key=lambda x: (
+                                x.lower() != "assembly.step",
+                                x.lower() != "assembly.stp",
+                                x,
+                            )
+                        )
+                        return zf.read(step_files[0])
+            if content.strip().startswith(b"ISO-10303-21"):
+                return content
+            return None
+
+        found_step = False
+
+        for file_id in external_ids:
+            download = self.client.request(
+                HTTP.GET,
+                f"/api/documents/d/{did}/externaldata/{file_id}",
+                headers={"Accept": "application/octet-stream"},
+                log_response=False,
+            )
+            download.raise_for_status()
+            content = download.content
+
+            extracted = _extract_step_from_content(content)
+            if extracted is not None:
+                output_path.write_bytes(extracted)
+                found_step = True
+                break
+
+            # 3. If it's XML, it might be a manifest; continue to next external_id
+            if content.strip().startswith(b"<?xml") or content.strip().startswith(
+                b"<manifest"
+            ):
+                continue
+
+        if not found_step:
+            try:
+                download = self.client.request(
+                    HTTP.GET,
+                    f"/api/translations/{translation_id}/download",
+                    headers={"Accept": "application/octet-stream"},
+                    log_response=False,
+                )
+                download.raise_for_status()
+                extracted = _extract_step_from_content(download.content)
+                if extracted is not None:
+                    output_path.write_bytes(extracted)
+                    return output_path
+            except Exception:
+                pass
+
+        if found_step:
+            return output_path
+
+        raise RuntimeError(
+            f"No STEP content found in translation results for {output_path.name}. "
+            "Received XML payload (Parasolid tree?) instead."
         )
-        download.raise_for_status()
-        output_path.write_bytes(download.content)
-        return output_path
 
     def export_link_meshes(
         self, link_records: Dict[str, Any], mesh_dir: Path
@@ -497,6 +631,16 @@ class StepMeshExporter:
         else:
             asset_path = mesh_dir / "assembly.step"
             self.export_step(asset_path)
+
+        if asset_path.suffix.lower() != ".zip":
+            header = _read_file_header(asset_path)
+            if not _is_step_payload(header) and not zipfile.is_zipfile(asset_path):
+                if self.client is None:
+                    raise RuntimeError(
+                        f"Invalid STEP file: {asset_path} (re-export requires client)"
+                    )
+                asset_path = mesh_dir / "assembly.step"
+                self.export_step(asset_path)
 
         if asset_path.suffix.lower() == ".zip":
             # For backward compatibility if 'asset_path' ends in '.zip'
@@ -577,16 +721,28 @@ class StepMeshExporter:
         doc = TDocStd_Document(TCollection_ExtendedString("step"))
         reader = STEPCAFControl_Reader()
         reader.SetNameMode(True)
+        reader.SetPropsMode(True)
+        reader.SetColorMode(True)
+        reader.SetLayerMode(True)
+        if hasattr(reader, "SetMatMode"):
+            reader.SetMatMode(True)
+        if hasattr(reader, "SetViewMode"):
+            reader.SetViewMode(True)
+        if hasattr(reader, "SetGDTMode"):
+            reader.SetGDTMode(True)
+        if hasattr(reader, "SetSHUOMode"):
+            reader.SetSHUOMode(True)
         status = reader.ReadFile(str(asset_path))
         if status != IFSelect_RetDone:
             raise RuntimeError(f"STEP read failed with status {status}: {asset_path}")
 
-        reader.Transfer(doc)
+        if not reader.Transfer(doc):
+            raise RuntimeError("STEP transfer failed")
         shape_tool = _get_shape_tool(doc)
         labels = _get_free_shape_labels(shape_tool)
 
-        part_shapes: Dict[str, Any] = {}
-        part_locations: Dict[str, TopLoc_Location] = {}
+        part_shapes: Dict[Any, Any] = {}
+        part_locations: Dict[Any, TopLoc_Location] = {}
         for i in range(labels.Length()):
             _collect_shapes(
                 shape_tool,
@@ -596,9 +752,134 @@ class StepMeshExporter:
                 part_locations,
             )
 
+        has_occurrence_ids = any(
+            isinstance(key, tuple) and len(key) > 0 for key in part_shapes.keys()
+        )
+        has_any_ids = any(
+            (isinstance(key, tuple) and len(key) > 0)
+            or (isinstance(key, str) and bool(key))
+            for key in part_shapes.keys()
+        )
+
+        part_id_counts: Dict[str, int] = {}
+        for part in self.cad.parts.values():
+            part_id = getattr(part, "partId", None)
+            if part_id is None:
+                continue
+            part_id_counts[part_id] = part_id_counts.get(part_id, 0) + 1
+        has_duplicate_part_ids = any(count > 1 for count in part_id_counts.values())
+
+        needs_reexport = (not has_any_ids) or (
+            not has_occurrence_ids and has_duplicate_part_ids
+        )
+
+        if needs_reexport:
+            # Re-export to ensure export IDs are embedded
+            asset_path = mesh_dir / "assembly.step"
+            try:
+                self.export_step(asset_path)
+            except Exception as exc:
+                if self.client is None:
+                    raise RuntimeError(
+                        "STEP file missing occurrence export IDs and no client available to re-export."
+                    ) from exc
+                raise
+
+            doc = TDocStd_Document(TCollection_ExtendedString("step"))
+            reader = STEPCAFControl_Reader()
+            reader.SetNameMode(True)
+            reader.SetPropsMode(True)
+            reader.SetColorMode(True)
+            reader.SetLayerMode(True)
+            if hasattr(reader, "SetMatMode"):
+                reader.SetMatMode(True)
+            if hasattr(reader, "SetViewMode"):
+                reader.SetViewMode(True)
+            if hasattr(reader, "SetGDTMode"):
+                reader.SetGDTMode(True)
+            if hasattr(reader, "SetSHUOMode"):
+                reader.SetSHUOMode(True)
+
+            status = reader.ReadFile(str(asset_path))
+            if status != IFSelect_RetDone:
+                raise RuntimeError(
+                    f"STEP read failed with status {status}: {asset_path}"
+                )
+            if not reader.Transfer(doc):
+                raise RuntimeError("STEP transfer failed")
+            shape_tool = _get_shape_tool(doc)
+            labels = _get_free_shape_labels(shape_tool)
+            part_shapes.clear()
+            part_locations.clear()
+            for i in range(labels.Length()):
+                _collect_shapes(
+                    shape_tool,
+                    labels.Value(i + 1),
+                    TopLoc_Location(),
+                    part_shapes,
+                    part_locations,
+                )
+            has_occurrence_ids = any(
+                isinstance(key, tuple) and len(key) > 0 for key in part_shapes.keys()
+            )
+            has_any_ids = any(
+                (isinstance(key, tuple) and len(key) > 0)
+                or (isinstance(key, str) and bool(key))
+                for key in part_shapes.keys()
+            )
+            needs_reexport = (not has_any_ids) or (
+                not has_occurrence_ids and has_duplicate_part_ids
+            )
+
+        if needs_reexport:
+            raise RuntimeError(
+                "STEP file missing occurrence export IDs. Re-export with includeExportIds enabled."
+            )
+
         stl_writer = StlAPI_Writer()
         mesh_map: Dict[str, str] = {}
         missing_meshes: Dict[str, List[Dict[str, str]]] = {}
+
+        occ_path_to_name: Dict[Tuple[str, ...], str] = {}
+        for occ_key, occ in self.cad.occurrences.items():
+            occ_path = getattr(occ, "path", None)
+            if not occ_path:
+                continue
+            occ_path_to_name[tuple(occ_path)] = str(occ_key)
+
+        def _instance_leaf_name(key: Any) -> str | None:
+            inst = self.cad.instances.get(key)
+            if inst is None:
+                return None
+            name = getattr(inst, "name", None)
+            if not name:
+                return None
+            return re.sub(r"\s*<\d+>$", "", name)
+
+        def _name_path_for_key(key: Any) -> Tuple[str, ...] | None:
+            path = getattr(key, "path", None)
+            if not path:
+                return None
+            names: List[str] = []
+            for i in range(1, len(path) + 1):
+                prefix = tuple(path[:i])
+                name = occ_path_to_name.get(prefix)
+                if not name:
+                    return None
+                names.append(name)
+            return tuple(names) if names else None
+
+        def _normalized_leaf_name(name_path: Tuple[str, ...] | None) -> str | None:
+            if not name_path:
+                return None
+            leaf = name_path[-1]
+            leaf = re.sub(r"_\d+$", "", leaf)
+            if len(name_path) >= 2:
+                parent = re.sub(r"_\d+$", "", name_path[-2])
+                prefix = f"{parent}_"
+                if leaf.startswith(prefix):
+                    leaf = leaf[len(prefix) :]
+            return leaf
 
         for link_name, link in link_records.items():
             keys = link.keys
@@ -616,6 +897,30 @@ class StepMeshExporter:
                     part = self.cad.parts.get(key)
                     if part is None or getattr(part, "isRigidAssembly", False):
                         continue
+
+                    # Try occurrence path first
+                    part_path = getattr(key, "path", None)
+                    if part_path in part_locations:
+                        link_loc = part_locations[part_path]
+                        break
+
+                    inst_name = _instance_leaf_name(key)
+                    if inst_name in part_locations:
+                        link_loc = part_locations[inst_name]
+                        break
+
+                    # Try name path from instances
+                    name_path = _name_path_for_key(key)
+                    if name_path in part_locations:
+                        link_loc = part_locations[name_path]
+                        break
+
+                    leaf_name = _normalized_leaf_name(name_path)
+                    if leaf_name in part_locations:
+                        link_loc = part_locations[leaf_name]
+                        break
+
+                    # Try part ID
                     part_id = getattr(part, "partId", str(key))
                     if part_id in part_locations:
                         link_loc = part_locations[part_id]
@@ -634,17 +939,44 @@ class StepMeshExporter:
                 if part is None or getattr(part, "isRigidAssembly", False):
                     continue
 
-                part_id = getattr(part, "partId", str(key))
-                shape = part_shapes.get(part_id)
-                part_loc = part_locations.get(part_id)
+                # 1. Primary match: Occurrence Path (Tuple of IDs)
+                part_path = getattr(key, "path", None)
+                shape = part_shapes.get(part_path) if part_path else None
+                part_loc = part_locations.get(part_path) if part_path else None
+                name_path = None
+
+                if shape is None or part_loc is None:
+                    inst_name = _instance_leaf_name(key)
+                    shape = part_shapes.get(inst_name) if inst_name else None
+                    part_loc = part_locations.get(inst_name) if inst_name else None
+
+                if shape is None or part_loc is None:
+                    name_path = _name_path_for_key(key)
+                    shape = part_shapes.get(name_path) if name_path else None
+                    part_loc = part_locations.get(name_path) if name_path else None
+
+                if shape is None or part_loc is None:
+                    leaf_name = _normalized_leaf_name(name_path)
+                    shape = part_shapes.get(leaf_name) if leaf_name else None
+                    part_loc = part_locations.get(leaf_name) if leaf_name else None
+
+                if shape is None or part_loc is None:
+                    # 2. Secondary match: Part Studio ID (String)
+                    part_id = getattr(part, "partId", str(key))
+                    shape = part_shapes.get(part_id)
+                    part_loc = part_locations.get(part_id)
 
                 if shape is None or part_loc is None:
                     link_missing_parts.append(
                         {
-                            "part_id": part_id,
+                            "part_id": getattr(part, "partId", str(key)),
                             "export_name": "N/A",
                             "part_name": getattr(part, "name", "unknown"),
-                            "reason": f"Part ID {part_id} not found in STEP",
+                            "reason": (
+                                "Part not found in STEP (path="
+                                f"{getattr(key, 'path', 'N/A')}, "
+                                f"name_path={_name_path_for_key(key)})"
+                            ),
                         }
                     )
                     continue
