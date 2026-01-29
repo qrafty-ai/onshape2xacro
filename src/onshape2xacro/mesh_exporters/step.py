@@ -906,7 +906,10 @@ class StepMeshExporter:
             # Link frame transform (World to Link)
             link_matrix = getattr(link, "frame_transform", None)
             if link_matrix is not None:
-                link_loc = _matrix_to_loc(link_matrix)
+                # Scale translation from meters to millimeters to match STEP export
+                link_matrix = link_matrix.copy()
+                link_matrix[:3, 3] *= 1000.0
+                link_loc = TopLoc_Location(_matrix_to_trsf(link_matrix))
             else:
                 # Fallback to first part's location from STEP
                 link_loc = None
