@@ -483,23 +483,6 @@ class CondensedRobot(Robot):
                 T_origin_mat = np.linalg.inv(T_WC) @ T_WJ
                 joint_origin = Origin.from_matrix(T_origin_mat)
 
-                # Debug output for revolute joints
-                if "revolute" in mate_name.lower():
-                    import sys
-
-                    sys.stderr.write(f"\n=== DEBUG {mate_name} ===\n")
-                    sys.stderr.write(
-                        f"Parent link: {curr_name}, Child link: {next_name}\n"
-                    )
-                    sys.stderr.write(f"T_WC (parent link frame):\n{T_WC}\n")
-                    sys.stderr.write(
-                        f"T_WJ (joint world frame = child link frame):\n{T_WJ}\n"
-                    )
-                    sys.stderr.write(f"T_origin_mat (joint origin):\n{T_origin_mat}\n")
-                    sys.stderr.write(
-                        f"joint_origin xyz: {joint_origin.xyz}, rpy: {joint_origin.rpy}\n"
-                    )
-
                 mate_type = getattr(mate, "mateType", "REVOLUTE")
 
                 mate_limits = getattr(mate, "limits", None)
