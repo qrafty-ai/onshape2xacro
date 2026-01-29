@@ -83,14 +83,22 @@ def _iter_edges(graph) -> Iterable[Tuple[Any, Any, Any]]:
 def _part_world_matrix(part: Any) -> np.ndarray:
     """Extract 4x4 world transform from a CAD part."""
     part_tf = getattr(part, "worldToPartTF", None)
-    if part_tf is None:
-        return np.eye(4)
-    tf_value = getattr(part_tf, "to_tf", None)
-    if callable(tf_value):
-        return cast(np.ndarray, tf_value())
-    if tf_value is not None:
-        return cast(np.ndarray, tf_value)
-    return np.eye(4)
+    mat = np.eye(4)
+    if part_tf is not None:
+        tf_value = getattr(part_tf, "to_tf", None)
+        if callable(tf_value):
+            mat = cast(np.ndarray, tf_value())
+        elif tf_value is not None:
+            mat = cast(np.ndarray, tf_value)
+
+    # Check for transpose (Onshape often returns column-major which numpy reads as transposed row-major if not reshaped with order='F')
+    # Standard rigid transform has [0,0,0,1] as last row.
+    # If last column is [0,0,0,1] and last row is not, it's transposed.
+    if not np.allclose(mat[3, :], [0, 0, 0, 1]) and np.allclose(
+        mat[:, 3], [0, 0, 0, 1]
+    ):
+        return mat.T
+    return mat
 
 
 def occ_match(occ1, occ2):
@@ -293,7 +301,42 @@ class CondensedRobot(Robot):
         queue = list(roots)
         for root_name in roots:
             # Root link frame defaults to identity (Assembly origin)
-            link_to_rec[root_name].frame_transform = np.eye(4)
+            # Try to find representative part frame for root too
+            root_link_frame = np.eye(4)
+            if cad:
+                root_link_rec = link_to_rec[root_name]
+                candidates = zip(root_link_rec.keys, root_link_rec.occurrences)
+                for key, occ in candidates:
+                    found = False
+                    try:
+                        # Try get_transform
+                        if hasattr(cad, "get_transform"):
+                            root_link_frame = cad.get_transform(occ)
+                            # Normalize
+                            if not np.allclose(
+                                root_link_frame[3, :], [0, 0, 0, 1]
+                            ) and np.allclose(root_link_frame[:, 3], [0, 0, 0, 1]):
+                                root_link_frame = root_link_frame.T
+                            found = True
+                    except Exception:
+                        pass
+
+                    if not found and hasattr(cad, "parts"):
+                        if key in cad.parts:
+                            root_link_frame = _part_world_matrix(cad.parts[key])
+                            found = True
+                        else:
+                            for p_key, p_part in cad.parts.items():
+                                if occ_match(p_key.path, occ) or occ_match(
+                                    getattr(p_key, "name_path", []), occ
+                                ):
+                                    root_link_frame = _part_world_matrix(p_part)
+                                    found = True
+                                    break
+                    if found:
+                        break
+
+            link_to_rec[root_name].frame_transform = root_link_frame
 
         visited = set(roots)
         while queue:
@@ -340,10 +383,12 @@ class CondensedRobot(Robot):
                     if parent_entity is None:
                         # Fallback to first entity if matching fails
                         parent_entity = mate.matedEntities[0]
-                        parent_occ = parent_entity.matedOccurrence
-                    else:
-                        # Use the matched world-level occurrence for better part finding
-                        parent_occ = matched_world_occ
+
+                    # Always use the mate entity's occurrence for finding the part transform
+                    # This is the actual part the mate connector is attached to
+                    parent_occ = getattr(
+                        parent_entity, "matedOccurrence", matched_world_occ
+                    )
 
                     # Resolve to a PathKey when possible (cad.parts keys are PathKey)
                     parent_key = None
@@ -379,11 +424,16 @@ class CondensedRobot(Robot):
                     # We need the world transform of this part
                     parent_part_world = np.eye(4)
                     found_part = False
-                    if cad and hasattr(cad, "get_occurrence_tf"):
+                    if cad and hasattr(cad, "get_transform"):
                         try:
-                            parent_part_world = cad.get_occurrence_tf(
+                            parent_part_world = cad.get_transform(
                                 parent_key or parent_occ
                             )
+                            # Normalize
+                            if not np.allclose(
+                                parent_part_world[3, :], [0, 0, 0, 1]
+                            ) and np.allclose(parent_part_world[:, 3], [0, 0, 0, 1]):
+                                parent_part_world = parent_part_world.T
                             found_part = True
                         except Exception:
                             found_part = False
@@ -415,13 +465,43 @@ class CondensedRobot(Robot):
                 except (AttributeError, IndexError):
                     T_WJ = T_WC  # Fallback to identity if mate data missing
 
-                # Joint origin is transform from parent link frame to joint frame
+                # =============================================================
+                # KINEMATIC CHAIN APPROACH:
+                # Child link frame = Joint world frame (T_WJ)
+                # This ensures joint origins form a proper kinematic chain:
+                #   joint_origin = inv(T_parent_link) @ T_WJ
+                # Meshes are "baked" into link frame by StepMeshExporter.
+                # =============================================================
+
+                mate_name = getattr(mate, "name", f"joint_{curr_name}_{next_name}")
+
+                # Child link frame IS the joint world frame
+                # This is kinematically correct: the child link origin is at the joint axis
+                T_target_child = T_WJ
+
+                # Joint origin = transform from parent link frame to joint world frame
                 T_origin_mat = np.linalg.inv(T_WC) @ T_WJ
                 joint_origin = Origin.from_matrix(T_origin_mat)
 
-                # Store joint
-                mate_name = getattr(mate, "name", f"joint_{curr_name}_{next_name}")
+                # Debug output for revolute joints
+                if "revolute" in mate_name.lower():
+                    import sys
+
+                    sys.stderr.write(f"\n=== DEBUG {mate_name} ===\n")
+                    sys.stderr.write(
+                        f"Parent link: {curr_name}, Child link: {next_name}\n"
+                    )
+                    sys.stderr.write(f"T_WC (parent link frame):\n{T_WC}\n")
+                    sys.stderr.write(
+                        f"T_WJ (joint world frame = child link frame):\n{T_WJ}\n"
+                    )
+                    sys.stderr.write(f"T_origin_mat (joint origin):\n{T_origin_mat}\n")
+                    sys.stderr.write(
+                        f"joint_origin xyz: {joint_origin.xyz}, rpy: {joint_origin.rpy}\n"
+                    )
+
                 mate_type = getattr(mate, "mateType", "REVOLUTE")
+
                 mate_limits = getattr(mate, "limits", None)
 
                 joint_rec = JointRecord(
@@ -435,8 +515,8 @@ class CondensedRobot(Robot):
                 )
                 robot.add_edge(curr_name, next_name, joint=joint_rec, data=joint_rec)
 
-                # Set child link frame to joint frame
-                link_to_rec[next_name].frame_transform = T_WJ
+                # Set child link frame
+                link_to_rec[next_name].frame_transform = T_target_child
 
                 visited.add(next_name)
                 queue.append(next_name)
