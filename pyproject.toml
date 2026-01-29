@@ -12,6 +12,9 @@ dependencies = [
     "xacro>=2.1.1",
     "keyring",
     "cadquery-ocp>=7.7.0",
+    "trimesh>=4.11.1",
+    "scipy>=1.17.0",
+    "pymeshlab>=2025.7",
 ]
 
 [project.scripts]

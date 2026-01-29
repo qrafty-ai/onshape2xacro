@@ -121,7 +121,6 @@ class XacroSerializer(RobotSerializer):
                 inc = ET.SubElement(root, "{http://www.ros.org/wiki/xacro}include")
                 inc.set("filename", rel_inc_path)
 
-            # Add macro
             self._add_module_macro(
                 root,
                 name,
@@ -138,6 +137,32 @@ class XacroSerializer(RobotSerializer):
         # 4. Generate main entry point (.urdf.xacro)
         # This file includes the root macro and instantiates it.
         entry_point_root = self._create_xacro_root(robot.name)
+
+        # Load configuration from YAML files (Global properties)
+        ET.SubElement(
+            entry_point_root,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="joint_limits_file",
+            value="${load_yaml('../config/joint_limits.yaml')}",
+        )
+        ET.SubElement(
+            entry_point_root,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="joint_limits",
+            value="${joint_limits_file['joint_limits']}",
+        )
+        ET.SubElement(
+            entry_point_root,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="inertials_file",
+            value="${load_yaml('../config/inertials.yaml')}",
+        )
+        ET.SubElement(
+            entry_point_root,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="inertials",
+            value="${inertials_file['inertials']}",
+        )
 
         # Include the macro file
         inc = ET.SubElement(entry_point_root, "{http://www.ros.org/wiki/xacro}include")
@@ -156,7 +181,7 @@ class XacroSerializer(RobotSerializer):
             f.write(entry_point_content)
 
         # 5. Generate default configs (Stage 7)
-        self._generate_default_configs(robot, config_dir)
+        self._generate_default_configs(robot, config_dir, config)
 
         # 6. Write missing meshes prompt file if any parts failed
         if missing_meshes:
@@ -248,6 +273,81 @@ class XacroSerializer(RobotSerializer):
         macro.set("name", sanitize_name(robot.name))
         macro.set("params", "prefix:=''")
 
+        # Construct configuration dictionaries for inline properties (support for preview/memory-only export)
+        joint_limits = {}
+        inertials = {}
+
+        for parent, child in robot.edges:
+            edge_data = robot.get_edge_data(parent, child)
+            joint = edge_data.get("data")
+            if joint and is_joint(joint.name):
+                name = sanitize_name(get_joint_name(joint.name))
+
+                default_limit = {
+                    "lower": -3.14,
+                    "upper": 3.14,
+                    "effort": 100.0,
+                    "velocity": 1.0,
+                    "damping": 0.0,
+                    "friction": 0.0,
+                }
+
+                stored_limits = getattr(joint, "limits", None)
+                if stored_limits:
+                    if isinstance(stored_limits, dict):
+                        if "min" in stored_limits and "max" in stored_limits:
+                            default_limit["lower"] = -stored_limits["max"]
+                            default_limit["upper"] = -stored_limits["min"]
+                        if "effort" in stored_limits:
+                            default_limit["effort"] = stored_limits["effort"]
+                        if "velocity" in stored_limits:
+                            default_limit["velocity"] = stored_limits["velocity"]
+                    else:
+                        if hasattr(stored_limits, "min") and hasattr(
+                            stored_limits, "max"
+                        ):
+                            default_limit["lower"] = -stored_limits.max
+                            default_limit["upper"] = -stored_limits.min
+                        if hasattr(stored_limits, "effort"):
+                            default_limit["effort"] = stored_limits.effort
+                        if hasattr(stored_limits, "velocity"):
+                            default_limit["velocity"] = stored_limits.velocity
+
+                joint_limits[name] = config.get_joint_limit(name, default_limit)
+
+        for node, data in robot.nodes(data=True):
+            link = data.get("data")
+            if link:
+                name = sanitize_name(link.name)
+
+                default_inertial = {
+                    "mass": 1.0,
+                    "origin": {"xyz": "0 0 0", "rpy": "0 0 0"},
+                    "inertia": {
+                        "ixx": 0.01,
+                        "iyy": 0.01,
+                        "izz": 0.01,
+                        "ixy": 0,
+                        "ixz": 0,
+                        "iyz": 0,
+                    },
+                }
+                inertials[name] = config.get_inertial(name, default_inertial)
+
+        # Inject properties inline using Python dictionary syntax
+        ET.SubElement(
+            macro,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="joint_limits",
+            value=f"${{{str(joint_limits)}}}",
+        )
+        ET.SubElement(
+            macro,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="inertials",
+            value=f"${{{str(inertials)}}}",
+        )
+
         for node, data in robot.nodes(data=True):
             link = data.get("link") or data.get("data")
             if link:
@@ -271,57 +371,57 @@ class XacroSerializer(RobotSerializer):
         root: ET._Element,
         link: Any,
         config: ConfigOverride,
-        mesh_map: Dict,
+        mesh_map: Dict[str, str | Dict[str, str]],
         mesh_rel_path: str = "meshes",
     ):
         name = sanitize_name(link.name)
         link_el = ET.SubElement(root, "link")
         link_el.set("name", f"${{prefix}}{name}")
 
-        default_inertial = {
-            "mass": 1.0,
-            "origin": {"xyz": "0 0 0", "rpy": "0 0 0"},
-            "inertia": {
-                "ixx": 0.01,
-                "iyy": 0.01,
-                "izz": 0.01,
-                "ixy": 0,
-                "ixz": 0,
-                "iyz": 0,
-            },
-        }
-        val = config.get_inertial(name, default_inertial)
+        # Use runtime YAML configuration for inertials
         inertial = ET.SubElement(link_el, "inertial")
-        ET.SubElement(inertial, "mass", value=str(val["mass"]))
-        origin = val.get("origin", default_inertial["origin"])
+        ET.SubElement(inertial, "mass", value=f"${{inertials['{name}']['mass']}}")
+
         ET.SubElement(
             inertial,
             "origin",
-            xyz=origin.get("xyz", "0 0 0"),
-            rpy=origin.get("rpy", "0 0 0"),
+            xyz=f"${{inertials['{name}']['origin']['xyz']}}",
+            rpy=f"${{inertials['{name}']['origin']['rpy']}}",
         )
-        inertia = val.get("inertia", default_inertial["inertia"])
+
         ET.SubElement(
             inertial,
             "inertia",
-            ixx=str(inertia.get("ixx", 0.01)),
-            iyy=str(inertia.get("iyy", 0.01)),
-            izz=str(inertia.get("izz", 0.01)),
-            ixy=str(inertia.get("ixy", 0)),
-            ixz=str(inertia.get("ixz", 0)),
-            iyz=str(inertia.get("iyz", 0)),
+            ixx=f"${{inertials['{name}']['inertia']['ixx']}}",
+            iyy=f"${{inertials['{name}']['inertia']['iyy']}}",
+            izz=f"${{inertials['{name}']['inertia']['izz']}}",
+            ixy=f"${{inertials['{name}']['inertia']['ixy']}}",
+            ixz=f"${{inertials['{name}']['inertia']['ixz']}}",
+            iyz=f"${{inertials['{name}']['inertia']['iyz']}}",
         )
 
         if name in mesh_map:
             # Check for origin in link (baked mesh means identity origin)
             # LinkRecord now contains frame_transform used for baking
+
+            entry = mesh_map[name]
+            # Handle both old (str) and new (dict) formats
+            if isinstance(entry, dict):
+                visual_file = entry.get("visual", f"{name}.stl")
+                collision_file = entry.get("collision", f"{name}.stl")
+            else:
+                visual_file = entry
+                collision_file = entry
+
             for tag in ["visual", "collision"]:
                 el = ET.SubElement(link_el, tag)
                 # Identity origin for baked meshes
                 ET.SubElement(el, "origin", xyz="0 0 0", rpy="0 0 0")
                 geom = ET.SubElement(el, "geometry")
                 mesh = ET.SubElement(geom, "mesh")
-                mesh.set("filename", f"{mesh_rel_path}/{mesh_map[name]}")
+
+                filename = visual_file if tag == "visual" else collision_file
+                mesh.set("filename", f"{mesh_rel_path}/{filename}")
                 mesh.set("scale", "0.001 0.001 0.001")
 
     def _joint_to_xacro(
@@ -380,42 +480,21 @@ class XacroSerializer(RobotSerializer):
             ET.SubElement(joint_el, "axis", xyz="0 0 -1")
 
         if jtype in ["revolute", "prismatic"]:
-            # Limits
-            default_limit = {
-                "lower": -3.14,
-                "upper": 3.14,
-                "effort": 100,
-                "velocity": 1.0,
-            }
-            # Use stored limits if available
-            stored_limits = getattr(joint, "limits", None)
-            if stored_limits:
-                # negate and swap limits because we flipped the axis
-                if isinstance(stored_limits, dict):
-                    if "min" in stored_limits and "max" in stored_limits:
-                        default_limit["lower"] = -stored_limits["max"]
-                        default_limit["upper"] = -stored_limits["min"]
-                    if "effort" in stored_limits:
-                        default_limit["effort"] = stored_limits["effort"]
-                    if "velocity" in stored_limits:
-                        default_limit["velocity"] = stored_limits["velocity"]
-                else:
-                    if hasattr(stored_limits, "min") and hasattr(stored_limits, "max"):
-                        default_limit["lower"] = -stored_limits.max
-                        default_limit["upper"] = -stored_limits.min
-                    if hasattr(stored_limits, "effort"):
-                        default_limit["effort"] = stored_limits.effort
-                    if hasattr(stored_limits, "velocity"):
-                        default_limit["velocity"] = stored_limits.velocity
-
-            val = config.get_joint_limit(name, default_limit)
+            # Limits from runtime YAML configuration
             ET.SubElement(
                 joint_el,
                 "limit",
-                lower=str(val["lower"]),
-                upper=str(val["upper"]),
-                effort=str(val["effort"]),
-                velocity=str(val["velocity"]),
+                lower=f"${{joint_limits['{name}']['lower']}}",
+                upper=f"${{joint_limits['{name}']['upper']}}",
+                effort=f"${{joint_limits['{name}']['effort']}}",
+                velocity=f"${{joint_limits['{name}']['velocity']}}",
+            )
+            # Add dynamics from runtime YAML configuration
+            ET.SubElement(
+                joint_el,
+                "dynamics",
+                damping=f"${{joint_limits['{name}']['damping']}}",
+                friction=f"${{joint_limits['{name}']['friction']}}",
             )
 
         # Append to root
@@ -423,7 +502,7 @@ class XacroSerializer(RobotSerializer):
 
     def _export_meshes(
         self, robot: "Robot", mesh_dir: Path
-    ) -> tuple[dict[str, str], dict[str, list[dict[str, str]]]]:
+    ) -> tuple[dict[str, str | dict[str, str]], dict[str, list[dict[str, str]]]]:
         """Export meshes for robot links."""
         link_records: Dict[str, Any] = {}
         for _, data in robot.nodes(data=True):
@@ -443,7 +522,15 @@ class XacroSerializer(RobotSerializer):
 
         return {}, {}
 
-    def _generate_default_configs(self, robot: "Robot", config_dir: Path):
+    def _generate_default_configs(
+        self,
+        robot: "Robot",
+        config_dir: Path,
+        config: Optional[ConfigOverride] = None,
+    ):
+        if config is None:
+            config = ConfigOverride()
+
         joint_limits = {}
         inertials = {}
         for parent, child in robot.edges:
@@ -451,17 +538,46 @@ class XacroSerializer(RobotSerializer):
             joint = edge_data.get("data")
             if joint and is_joint(joint.name):
                 name = sanitize_name(get_joint_name(joint.name))
-                joint_limits[name] = {
+
+                default_limit = {
                     "lower": -3.14,
                     "upper": 3.14,
                     "effort": 100.0,
                     "velocity": 1.0,
+                    "damping": 0.0,
+                    "friction": 0.0,
                 }
+
+                # Try to get from stored limits if available
+                stored_limits = getattr(joint, "limits", None)
+                if stored_limits:
+                    if isinstance(stored_limits, dict):
+                        if "min" in stored_limits and "max" in stored_limits:
+                            default_limit["lower"] = -stored_limits["max"]
+                            default_limit["upper"] = -stored_limits["min"]
+                        if "effort" in stored_limits:
+                            default_limit["effort"] = stored_limits["effort"]
+                        if "velocity" in stored_limits:
+                            default_limit["velocity"] = stored_limits["velocity"]
+                    else:
+                        if hasattr(stored_limits, "min") and hasattr(
+                            stored_limits, "max"
+                        ):
+                            default_limit["lower"] = -stored_limits.max
+                            default_limit["upper"] = -stored_limits.min
+                        if hasattr(stored_limits, "effort"):
+                            default_limit["effort"] = stored_limits.effort
+                        if hasattr(stored_limits, "velocity"):
+                            default_limit["velocity"] = stored_limits.velocity
+
+                joint_limits[name] = config.get_joint_limit(name, default_limit)
+
         for node, data in robot.nodes(data=True):
             link = data.get("data")
             if link:
                 name = sanitize_name(link.name)
-                inertials[name] = {
+
+                default_inertial = {
                     "mass": 1.0,
                     "origin": {"xyz": "0 0 0", "rpy": "0 0 0"},
                     "inertia": {
@@ -473,6 +589,7 @@ class XacroSerializer(RobotSerializer):
                         "iyz": 0,
                     },
                 }
+                inertials[name] = config.get_inertial(name, default_inertial)
 
         with open(config_dir / "joint_limits.yaml", "w") as f:
             yaml.dump({"joint_limits": joint_limits}, f)

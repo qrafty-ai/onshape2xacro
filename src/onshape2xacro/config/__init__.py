@@ -29,11 +29,12 @@ class ConfigOverride:
 
     def get_joint_limit(self, name: str, default: Dict[str, float]) -> Dict[str, float]:
         """Get overridden joint limit or return default."""
+        res = default.copy()
         if name in self.joint_limits:
-            res = default.copy()
             res.update(self.joint_limits[name])
-            return res
-        return default
+        if name in self.dynamics:
+            res.update(self.dynamics[name])
+        return res
 
     def get_inertial(self, name: str, default: Dict[str, Any]) -> Dict[str, Any]:
         """Get overridden inertial or return default."""
