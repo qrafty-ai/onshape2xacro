@@ -3,7 +3,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple, cast
 
 import numpy as np
 from onshape_robotics_toolkit.connect import Client, HTTP
@@ -251,7 +251,7 @@ def _collect_shapes(
     if not callable(get_shape):
         raise RuntimeError("ShapeTool missing GetShape method")
 
-    shape = get_shape(shape_label)
+    shape = cast(Any, get_shape(shape_label))
     if shape.IsNull():
         return
 
@@ -295,7 +295,7 @@ def _load_step_shapes(step_path: Path) -> list[Any]:
     shapes = []
     for i in range(labels.Length()):
         label = labels.Value(i + 1)
-        shape = _get_shape(shape_tool, label)
+        shape = cast(Any, _get_shape(shape_tool, label))
         if not shape.IsNull():
             shapes.append(shape)
     return shapes
@@ -336,9 +336,9 @@ def _part_world_matrix(part: Any) -> np.ndarray:
         return np.eye(4)
     tf_value = getattr(part_tf, "to_tf", None)
     if callable(tf_value):
-        return tf_value()
+        return cast(np.ndarray, tf_value())
     if tf_value is not None:
-        return tf_value
+        return cast(np.ndarray, tf_value)
     return np.eye(4)
 
 
@@ -475,7 +475,7 @@ class StepMeshExporter:
         return output_path
 
     def export_link_meshes(
-        self, link_groups: Dict[str, list[Any]], mesh_dir: Path
+        self, link_records: Dict[str, Any], mesh_dir: Path
     ) -> Tuple[Dict[str, str], Dict[str, List[Dict[str, str]]]]:
         """Export link meshes from STEP files.
 
@@ -499,7 +499,8 @@ class StepMeshExporter:
         mesh_map: Dict[str, str] = {}
         missing_meshes: Dict[str, List[Dict[str, str]]] = {}
 
-        for link_name, keys in link_groups.items():
+        for link_name, link in link_records.items():
+            keys = link.keys
             if not keys:
                 continue
 
@@ -516,9 +517,13 @@ class StepMeshExporter:
             if not valid_keys:
                 continue
 
-            # Reference part for the link frame (first part in the link)
-            ref_key = valid_keys[0]
-            link_world = _part_world_matrix(self.cad.parts[ref_key])
+            # Link frame transform (World to Link)
+            # If LinkRecord has frame_transform, use it. Otherwise fallback to first part.
+            link_world = getattr(link, "frame_transform", None)
+            if link_world is None:
+                ref_key = valid_keys[0]
+                link_world = _part_world_matrix(self.cad.parts[ref_key])
+
             link_world_inv = np.linalg.inv(link_world)
 
             compound = TopoDS_Compound()

@@ -1,8 +1,10 @@
 import hashlib
+import numpy as np
 from dataclasses import dataclass
-from typing import List, Any, Dict, Iterable, Tuple, cast
+from typing import List, Any, Dict, Iterable, Tuple, cast, Optional
 from collections.abc import Iterable as IterableABC
 from onshape_robotics_toolkit.robot import Robot
+from onshape_robotics_toolkit.models.link import Origin
 from onshape2xacro.naming import sanitize_name
 
 
@@ -14,6 +16,7 @@ class LinkRecord:
     part_names: List[str]
     keys: List[Any]
     parent: Any = None
+    frame_transform: Optional[np.ndarray] = None  # World to Link transform
 
 
 @dataclass
@@ -24,6 +27,7 @@ class JointRecord:
     child: str  # link name
     limits: Any = None
     mate: Any = None
+    origin: Optional[Origin] = None
 
 
 def is_joint_mate(mate) -> bool:
@@ -73,6 +77,19 @@ def _iter_edges(graph) -> Iterable[Tuple[Any, Any, Any]]:
             yield u, v, mate
 
 
+def _part_world_matrix(part: Any) -> np.ndarray:
+    """Extract 4x4 world transform from a CAD part."""
+    part_tf = getattr(part, "worldToPartTF", None)
+    if part_tf is None:
+        return np.eye(4)
+    tf_value = getattr(part_tf, "to_tf", None)
+    if callable(tf_value):
+        return cast(np.ndarray, tf_value())
+    if tf_value is not None:
+        return cast(np.ndarray, tf_value)
+    return np.eye(4)
+
+
 class CondensedRobot(Robot):
     """
     A Robot representation where fixed parts are grouped into single links.
@@ -89,12 +106,16 @@ class CondensedRobot(Robot):
         client=None,
         name="robot",
         fetch_mass_properties=True,
+        cad=None,
         **kwargs,
     ):
         """
         Create a condensed robot from a kinematic graph.
         Groups all nodes connected by non-joint edges into single links.
         """
+        if cad is None and "cad" in kwargs:
+            cad = kwargs["cad"]
+
         nodes = list(kinematic_graph.nodes)
         parent_map = {node: node for node in nodes}
 
@@ -124,16 +145,14 @@ class CondensedRobot(Robot):
             groups[root].append(node)
 
         # Create the robot instance
-        # Based on toolkit.Robot signature: Robot(kinematic_graph, name)
         robot = cls(kinematic_graph, name=name)
-        # Clear any nodes/edges added by the base constructor so we can add condensed ones
         robot.clear()
 
         # Map group root to LinkRecord
         root_to_link_node = {}
         used_names = set()
 
-        for root, group_nodes in groups.items():
+        for group_root, group_nodes in groups.items():
 
             def node_payload(node):
                 node_data = None
@@ -160,7 +179,7 @@ class CondensedRobot(Robot):
                 getattr(p, "part_name", str(n)) for p, n in zip(payloads, group_nodes)
             ]
 
-            # Create link name by joining sanitized part names
+            # Create link name
             sanitized_names = sorted(
                 list(set(sanitize_name(n) for n in part_names if n))
             )
@@ -181,10 +200,8 @@ class CondensedRobot(Robot):
                 link_name = unique_name
             used_names.add(link_name)
 
-            # Use parent of the root node (or first node in group)
-            # This is important for hierarchical xacro export
             parent = None
-            root_payload = node_payload(root)
+            root_payload = node_payload(group_root)
             if root_payload is not None:
                 parent = getattr(root_payload, "parent", None)
             if parent is None and payloads:
@@ -199,51 +216,94 @@ class CondensedRobot(Robot):
                 name=link_name,
             )
 
-            # Add node to robot.
-            node_obj = link_name
-            robot.add_node(node_obj, link=link_rec, data=link_rec)
-            root_to_link_node[root] = node_obj
+            robot.add_node(link_name, link=link_rec, data=link_rec)
+            root_to_link_node[group_root] = link_name
 
-        # Add joint edges
-        # Assumes kinematic graph edges are directed parent -> child.
-        # This is required for a valid tree structure in the resulting robot.
+        # Calculate Transforms and Add Joints
+        # 1. Identify roots and build link-level graph
+        link_to_rec = {
+            data["link"].name: data["link"] for _, data in robot.nodes(data=True)
+        }
+
+        # We need to know which link is parent and which is child based on joints
+        # LinkGraph: parent_link_name -> list of (child_link_name, mate)
+        link_tree: Dict[str, List[Tuple[str, Any]]] = {name: [] for name in link_to_rec}
+        has_parent = set()
+
         for u, v, mate in _iter_edges(kinematic_graph):
             if not is_joint_mate(mate) or mate is None:
                 continue
 
-            parent_node = root_to_link_node[find(u)]
-            child_node = root_to_link_node[find(v)]
-            if parent_node == child_node:
+            p_link_name = root_to_link_node[find(u)]
+            c_link_name = root_to_link_node[find(v)]
+            if p_link_name == c_link_name:
                 continue
 
-            # Extract mate properties robustly
-            mate_name = getattr(mate, "name", None)
-            if mate_name is None and isinstance(mate, dict):
-                mate_name = mate.get("name")
+            link_tree[p_link_name].append((c_link_name, mate))
+            has_parent.add(c_link_name)
 
-            if mate_name is None:
-                mate_name = f"joint_{parent_node}_{child_node}"
+        # 2. BFS to propagate transforms
+        roots = [name for name in link_to_rec if name not in has_parent]
+        queue = list(roots)
+        for root_name in roots:
+            # Root link frame defaults to identity (Assembly origin)
+            link_to_rec[root_name].frame_transform = np.eye(4)
 
-            mate_type = getattr(mate, "mateType", None)
-            if mate_type is None and isinstance(mate, dict):
-                mate_type = mate.get("mateType") or mate.get("joint_type")
-            if mate_type is None:
-                mate_type = "REVOLUTE"
+        visited = set(roots)
+        while queue:
+            curr_name = queue.pop(0)
+            curr_link = link_to_rec[curr_name]
+            T_WC = curr_link.frame_transform
 
-            mate_limits = getattr(mate, "limits", None)
-            if mate_limits is None and isinstance(mate, dict):
-                mate_limits = mate.get("limits")
+            for next_name, mate in link_tree[curr_name]:
+                if next_name in visited:
+                    continue
 
-            joint_rec = JointRecord(
-                name=mate_name,
-                joint_type=mate_type,
-                parent=parent_node,
-                child=child_node,
-                limits=mate_limits,
-                mate=mate,
-            )
+                # Calculate World transform of joint (mate connector)
+                # matedEntities[0] is the parent entity in the toolkit's KinematicGraph
+                try:
+                    parent_entity = mate.matedEntities[0]
+                    # Find the part in cad.parts that matches the occurrence
+                    parent_occ = parent_entity.matedOccurrence
+                    # We need the world transform of this part
+                    # In our case, payloads might already have it if cad was provided
+                    parent_part_world = np.eye(4)
+                    if cad and hasattr(cad, "parts"):
+                        # Search for part with matching occurrence
+                        for part in cad.parts.values():
+                            if getattr(part, "occurrence", None) == parent_occ:
+                                parent_part_world = _part_world_matrix(part)
+                                break
 
-            # Store in both 'joint' and 'data' attributes
-            robot.add_edge(parent_node, child_node, joint=joint_rec, data=joint_rec)
+                    T_PJ = parent_entity.matedCS.to_tf
+                    T_WJ = parent_part_world @ T_PJ
+                except (AttributeError, IndexError):
+                    T_WJ = T_WC  # Fallback to identity if mate data missing
+
+                # Joint origin is transform from parent link frame to joint frame
+                T_origin_mat = np.linalg.inv(T_WC) @ T_WJ
+                joint_origin = Origin.from_matrix(T_origin_mat)
+
+                # Store joint
+                mate_name = getattr(mate, "name", f"joint_{curr_name}_{next_name}")
+                mate_type = getattr(mate, "mateType", "REVOLUTE")
+                mate_limits = getattr(mate, "limits", None)
+
+                joint_rec = JointRecord(
+                    name=mate_name,
+                    joint_type=str(mate_type),
+                    parent=curr_name,
+                    child=next_name,
+                    limits=mate_limits,
+                    mate=mate,
+                    origin=joint_origin,
+                )
+                robot.add_edge(curr_name, next_name, joint=joint_rec, data=joint_rec)
+
+                # Set child link frame to joint frame
+                link_to_rec[next_name].frame_transform = T_WJ
+
+                visited.add(next_name)
+                queue.append(next_name)
 
         return robot
