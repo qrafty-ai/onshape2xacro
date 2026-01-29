@@ -350,6 +350,8 @@ class XacroSerializer(RobotSerializer):
                 jtype = "revolute"
             elif "PRISMATIC" in jtype_str:
                 jtype = "prismatic"
+            elif "CONTINUOUS" in jtype_str:
+                jtype = "continuous"
         joint_el.set("type", jtype)
 
         # Set Origin
@@ -373,10 +375,11 @@ class XacroSerializer(RobotSerializer):
         )
 
         # Update joint limits and axis if it's a movable joint
-        if jtype in ["revolute", "prismatic"]:
-            # Default to Z-axis rotation if not provided
-            ET.SubElement(joint_el, "axis", xyz="0 0 1")
+        if jtype in ["revolute", "prismatic", "continuous"]:
+            # Default to -Z-axis rotation (negated to match robot toolkit convention)
+            ET.SubElement(joint_el, "axis", xyz="0 0 -1")
 
+        if jtype in ["revolute", "prismatic"]:
             # Limits
             default_limit = {
                 "lower": -3.14,
@@ -387,13 +390,23 @@ class XacroSerializer(RobotSerializer):
             # Use stored limits if available
             stored_limits = getattr(joint, "limits", None)
             if stored_limits:
-                # Basic mapping from Onshape limits object
-                default_limit["lower"] = getattr(
-                    stored_limits, "lower", default_limit["lower"]
-                )
-                default_limit["upper"] = getattr(
-                    stored_limits, "upper", default_limit["upper"]
-                )
+                # negate and swap limits because we flipped the axis
+                if isinstance(stored_limits, dict):
+                    if "min" in stored_limits and "max" in stored_limits:
+                        default_limit["lower"] = -stored_limits["max"]
+                        default_limit["upper"] = -stored_limits["min"]
+                    if "effort" in stored_limits:
+                        default_limit["effort"] = stored_limits["effort"]
+                    if "velocity" in stored_limits:
+                        default_limit["velocity"] = stored_limits["velocity"]
+                else:
+                    if hasattr(stored_limits, "min") and hasattr(stored_limits, "max"):
+                        default_limit["lower"] = -stored_limits.max
+                        default_limit["upper"] = -stored_limits.min
+                    if hasattr(stored_limits, "effort"):
+                        default_limit["effort"] = stored_limits.effort
+                    if hasattr(stored_limits, "velocity"):
+                        default_limit["velocity"] = stored_limits.velocity
 
             val = config.get_joint_limit(name, default_limit)
             ET.SubElement(
