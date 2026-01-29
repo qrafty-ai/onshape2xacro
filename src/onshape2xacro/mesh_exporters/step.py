@@ -320,20 +320,31 @@ def _collect_shapes(
         return
 
     # Store by full occurrence path (tuple of IDs)
-    part_shapes[current_path] = shape
-    part_locations[current_path] = parent_loc
+    if current_path not in part_shapes:
+        part_shapes[current_path] = []
+        part_locations[current_path] = []
+    part_shapes[current_path].append(shape)
+    part_locations[current_path].append(parent_loc)
 
     # Also store by individual part ID and occurrence ID for fallbacks
     parsed_id = _get_occurrence_id(label) or _get_occurrence_id(shape_label)
     if parsed_id:
         if parsed_id not in part_shapes:
-            part_shapes[parsed_id] = shape
-            part_locations[parsed_id] = parent_loc
+            part_shapes[parsed_id] = []
+            part_locations[parsed_id] = []
+        # Avoid adding the same shape twice if parsed_id == current_path (not likely but safe)
+        if isinstance(part_shapes[parsed_id], list):
+            part_shapes[parsed_id].append(shape)
+            part_locations[parsed_id].append(parent_loc)
 
     label_name = _label_name(label) or _label_name(shape_label)
-    if label_name and label_name not in part_shapes:
-        part_shapes[label_name] = shape
-        part_locations[label_name] = parent_loc
+    if label_name:
+        if label_name not in part_shapes:
+            part_shapes[label_name] = []
+            part_locations[label_name] = []
+        if isinstance(part_shapes[label_name], list):
+            part_shapes[label_name].append(shape)
+            part_locations[label_name].append(parent_loc)
 
 
 def _get_free_shape_labels(shape_tool: Any) -> TDF_LabelSequence:
@@ -467,13 +478,15 @@ def split_step_to_meshes(
         builder.MakeCompound(compound)
 
         for part_id in part_ids:
-            shape = part_shapes.get(part_id)
-            if shape is None:
+            shapes = part_shapes.get(part_id)
+            if not shapes:
                 raise RuntimeError(f"Missing part id in STEP: {part_id}")
 
-            part_loc = part_locations.get(part_id, TopLoc_Location())
-            rel_loc = _relative_location(part_loc, link_loc)
-            builder.Add(compound, shape.Located(rel_loc))
+            locs = part_locations.get(part_id, [TopLoc_Location()])
+            # Add all occurrences of this part ID
+            for shape, part_loc in zip(shapes, locs):
+                rel_loc = _relative_location(part_loc, link_loc)
+                builder.Add(compound, shape.Located(rel_loc))
 
         BRepMesh_IncrementalMesh(compound, 0.001)
         out_path = mesh_dir / f"{link_name}.stl"
@@ -886,6 +899,8 @@ class StepMeshExporter:
             if not keys:
                 continue
 
+            used_indices: Dict[Any, int] = {}
+
             # Link frame transform (World to Link)
             link_matrix = getattr(link, "frame_transform", None)
             if link_matrix is not None:
@@ -900,30 +915,32 @@ class StepMeshExporter:
 
                     # Try occurrence path first
                     part_path = getattr(key, "path", None)
+                    if part_path:
+                        part_path = tuple(part_path)
                     if part_path in part_locations:
-                        link_loc = part_locations[part_path]
+                        link_loc = part_locations[part_path][0]
                         break
 
                     inst_name = _instance_leaf_name(key)
                     if inst_name in part_locations:
-                        link_loc = part_locations[inst_name]
+                        link_loc = part_locations[inst_name][0]
                         break
 
                     # Try name path from instances
                     name_path = _name_path_for_key(key)
                     if name_path in part_locations:
-                        link_loc = part_locations[name_path]
+                        link_loc = part_locations[name_path][0]
                         break
 
                     leaf_name = _normalized_leaf_name(name_path)
                     if leaf_name in part_locations:
-                        link_loc = part_locations[leaf_name]
+                        link_loc = part_locations[leaf_name][0]
                         break
 
                     # Try part ID
                     part_id = getattr(part, "partId", str(key))
                     if part_id in part_locations:
-                        link_loc = part_locations[part_id]
+                        link_loc = part_locations[part_id][0]
                         break
                 if link_loc is None:
                     link_loc = TopLoc_Location()
@@ -939,32 +956,42 @@ class StepMeshExporter:
                 if part is None or getattr(part, "isRigidAssembly", False):
                     continue
 
+                # Helper to pick shape and location from lists based on used indices
+                def _pick_match(match_key: Any):
+                    shapes = part_shapes.get(match_key)
+                    locs = part_locations.get(match_key)
+                    if shapes and locs:
+                        idx = used_indices.get(match_key, 0)
+                        # If we have multiple occurrences, distribute them 1-to-1
+                        # If we run out, reuse the last one (better than missing)
+                        shape_idx = min(idx, len(shapes) - 1)
+                        used_indices[match_key] = idx + 1
+                        return shapes[shape_idx], locs[shape_idx]
+                    return None, None
+
                 # 1. Primary match: Occurrence Path (Tuple of IDs)
                 part_path = getattr(key, "path", None)
-                shape = part_shapes.get(part_path) if part_path else None
-                part_loc = part_locations.get(part_path) if part_path else None
+                if part_path:
+                    part_path = tuple(part_path)
+                shape, part_loc = _pick_match(part_path)
                 name_path = None
 
                 if shape is None or part_loc is None:
                     inst_name = _instance_leaf_name(key)
-                    shape = part_shapes.get(inst_name) if inst_name else None
-                    part_loc = part_locations.get(inst_name) if inst_name else None
+                    shape, part_loc = _pick_match(inst_name)
 
                 if shape is None or part_loc is None:
                     name_path = _name_path_for_key(key)
-                    shape = part_shapes.get(name_path) if name_path else None
-                    part_loc = part_locations.get(name_path) if name_path else None
+                    shape, part_loc = _pick_match(name_path)
 
                 if shape is None or part_loc is None:
                     leaf_name = _normalized_leaf_name(name_path)
-                    shape = part_shapes.get(leaf_name) if leaf_name else None
-                    part_loc = part_locations.get(leaf_name) if leaf_name else None
+                    shape, part_loc = _pick_match(leaf_name)
 
                 if shape is None or part_loc is None:
                     # 2. Secondary match: Part Studio ID (String)
                     part_id = getattr(part, "partId", str(key))
-                    shape = part_shapes.get(part_id)
-                    part_loc = part_locations.get(part_id)
+                    shape, part_loc = _pick_match(part_id)
 
                 if shape is None or part_loc is None:
                     link_missing_parts.append(
