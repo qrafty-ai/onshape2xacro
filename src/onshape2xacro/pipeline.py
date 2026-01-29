@@ -69,7 +69,13 @@ def run_export(config: ExportConfig):
         with open(url_path / "cad.pickle", "rb") as f:
             cad = pickle.load(f)
         client = None
-        asset_path = url_path / "assembly.zip"
+        # Check for assembly.step (new format) or assembly.zip (old format)
+        if (url_path / "assembly.step").exists():
+            asset_path = url_path / "assembly.step"
+        elif (url_path / "assembly.zip").exists():
+            asset_path = url_path / "assembly.zip"
+        else:
+            asset_path = None
     else:
         client, cad = _get_client_and_cad(config.url, config.max_depth)
         asset_path = None
@@ -125,9 +131,9 @@ def run_fetch_cad(config: FetchCadConfig):
     with open(output_dir / "cad.pickle", "wb") as f:
         pickle.dump(cad, f)
 
-    print(f"Exporting STEP assembly to {output_dir / 'assembly.zip'}...")
+    print(f"Exporting STEP assembly to {output_dir / 'assembly.step'}...")
     exporter = StepMeshExporter(client, cad)
-    exporter.export_step(output_dir / "assembly.zip")
+    exporter.export_step(output_dir / "assembly.step")
 
     print(f"Fetch CAD complete! Data saved to {output_dir}")
 
