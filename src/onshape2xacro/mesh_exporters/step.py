@@ -1,7 +1,7 @@
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, TYPE_CHECKING
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, cast, TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
@@ -122,20 +122,22 @@ def _matrix_to_trsf(matrix: np.ndarray) -> gp_Trsf:
     from scipy.spatial.transform import Rotation
 
     rot_normalized = Rotation.from_matrix(matrix[:3, :3]).as_matrix()
+    trans = _get_translation(matrix)
+
     trsf = gp_Trsf()
     trsf.SetValues(
         rot_normalized[0][0],
         rot_normalized[0][1],
         rot_normalized[0][2],
-        matrix[0][3],
+        trans[0],
         rot_normalized[1][0],
         rot_normalized[1][1],
         rot_normalized[1][2],
-        matrix[1][3],
+        trans[1],
         rot_normalized[2][0],
         rot_normalized[2][1],
         rot_normalized[2][2],
-        matrix[2][3],
+        trans[2],
     )
     return trsf
 
@@ -193,6 +195,8 @@ def _collect_shapes(
     parent_loc: TopLoc_Location,
     part_shapes: Dict[Any, List[Any]],
     part_locations: Dict[Any, List[TopLoc_Location]],
+    part_instance_ids: Dict[Any, List[int]],
+    instance_counter: List[int],
     current_path: Tuple[str, ...] = (),
 ):
     is_asm = getattr(shape_tool, "IsAssembly_s", None) or getattr(
@@ -216,6 +220,8 @@ def _collect_shapes(
                     comp_loc,
                     part_shapes,
                     part_locations,
+                    part_instance_ids,
+                    instance_counter,
                     current_path + (occ_id,) if occ_id else current_path,
                 )
             else:
@@ -225,6 +231,8 @@ def _collect_shapes(
                     comp_loc,
                     part_shapes,
                     part_locations,
+                    part_instance_ids,
+                    instance_counter,
                     current_path,
                 )
         return
@@ -243,10 +251,14 @@ def _collect_shapes(
     if shape.IsNull():
         return
 
+    instance_id = instance_counter[0]
+    instance_counter[0] += 1
+
     for key in (current_path, _get_occurrence_id(label), _label_name(label)):
         if key:
             part_shapes.setdefault(key, []).append(shape)
             part_locations.setdefault(key, []).append(parent_loc)
+            part_instance_ids.setdefault(key, []).append(instance_id)
 
 
 def _normalize_for_match(s: str) -> str:
@@ -267,12 +279,79 @@ def _wildcard_match(pattern: str, target: str) -> bool:
         return False
 
 
-def _part_world_matrix(part: Any) -> np.ndarray:
-    part_tf = getattr(part, "worldToPartTF", None)
-    if part_tf is None:
+def _get_occurrence_world_matrix(cad: Any, key: Any) -> np.ndarray:
+    """Get the world transform for an occurrence key from Onshape metadata."""
+    occ = cad.occurrences.get(key)
+    if occ is None:
         return np.eye(4)
-    tf_value = getattr(part_tf, "to_tf", None)
-    return cast(np.ndarray, tf_value() if callable(tf_value) else tf_value or np.eye(4))
+    tf = getattr(occ, "transform", None)
+    if tf is None:
+        return np.eye(4)
+    return np.array(tf).reshape((4, 4))
+
+
+def _get_translation(matrix: np.ndarray) -> np.ndarray:
+    if matrix[3, 3] == 1.0 and np.all(matrix[:3, 3] == 0):
+        return matrix[3, :3]
+    return matrix[:3, 3]
+
+
+def _pick_match_by_distance(
+    mkey: Any,
+    onshape_world_matrix: np.ndarray,
+    part_shapes: Dict[Any, List[Any]],
+    part_locations: Dict[Any, List[TopLoc_Location]],
+    part_instance_ids: Dict[Any, List[int]],
+    assigned_instance_ids: Set[int],
+) -> Tuple[Optional[Any], Optional[TopLoc_Location], Optional[Any]]:
+    if mkey not in part_shapes:
+        return None, None, None
+
+    onshape_pos_mm = _get_translation(onshape_world_matrix) * 1000.0
+
+    best_idx = -1
+    min_dist = float("inf")
+
+    for i, loc in enumerate(part_locations[mkey]):
+        instance_id = part_instance_ids[mkey][i]
+        if instance_id in assigned_instance_ids:
+            continue
+
+        trans = loc.Transformation().TranslationPart()
+        step_pos_mm = np.array([trans.X(), trans.Y(), trans.Z()])
+
+        dist = np.linalg.norm(onshape_pos_mm - step_pos_mm)
+        if dist < min_dist:
+            min_dist = dist
+            best_idx = i
+
+    if best_idx == -1:
+        min_dist = float("inf")
+        for i, loc in enumerate(part_locations[mkey]):
+            trans = loc.Transformation().TranslationPart()
+            step_pos_mm = np.array([trans.X(), trans.Y(), trans.Z()])
+            dist = np.linalg.norm(onshape_pos_mm - step_pos_mm)
+            if dist < min_dist:
+                min_dist = dist
+                best_idx = i
+
+        if best_idx != -1:
+            logger.warning(
+                f"All instances of {mkey} already assigned. Cloning closest one."
+            )
+
+    if best_idx == -1:
+        return None, None, None
+
+    if min_dist > 10.0:
+        logger.warning(
+            f"Distance warning for {mkey}: closest instance is {min_dist:.2f}mm away"
+        )
+
+    best_instance_id = part_instance_ids[mkey][best_idx]
+    assigned_instance_ids.add(best_instance_id)
+    match_info_str = f"{mkey} (dist={min_dist:.1f}mm)"
+    return part_shapes[mkey][best_idx], part_locations[mkey][best_idx], match_info_str
 
 
 class StepMeshExporter:
@@ -365,7 +444,8 @@ class StepMeshExporter:
         labels = TDF_LabelSequence()
         get_free(labels)
 
-        part_shapes, part_locations = {}, {}
+        part_shapes, part_locations, part_instance_ids = {}, {}, {}
+        instance_counter = [0]
         for i in range(labels.Length()):
             _collect_shapes(
                 shape_tool,
@@ -373,6 +453,8 @@ class StepMeshExporter:
                 TopLoc_Location(),
                 part_shapes,
                 part_locations,
+                part_instance_ids,
+                instance_counter,
             )
 
         occ_path_to_name = {
@@ -404,7 +486,7 @@ class StepMeshExporter:
                     leaf = leaf[len(parent) + 1 :]
             return leaf
 
-        mesh_map, missing_meshes, used_indices = {}, {}, {}
+        mesh_map, missing_meshes, assigned_instance_ids = {}, {}, set()
 
         for link_name, link in link_records.items():
             if not link.keys:
@@ -451,18 +533,13 @@ class StepMeshExporter:
                 )
 
                 def _pick_match(mkey):
-                    if mkey not in part_shapes:
-                        return None, None, None
-                    used = used_indices.get(mkey, 0)
-                    used_indices[mkey] = used + 1
-                    if used >= len(part_shapes[mkey]):
-                        logger.warning(
-                            f"Cloning shape for {mkey} ({used + 1} > {len(part_shapes[mkey])})"
-                        )
-                    return (
-                        part_shapes[mkey][min(used, len(part_shapes[mkey]) - 1)],
-                        part_locations[mkey][min(used, len(part_shapes[mkey]) - 1)],
+                    return _pick_match_by_distance(
                         mkey,
+                        _get_occurrence_world_matrix(self.cad, key),
+                        part_shapes,
+                        part_locations,
+                        part_instance_ids,
+                        assigned_instance_ids,
                     )
 
                 # Full Matching Hierarchy
