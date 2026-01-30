@@ -572,27 +572,8 @@ class StepMeshExporter:
             raise RuntimeError("No external data ids returned for STEP translation")
 
         def _extract_step_from_content(raw: bytes) -> bytes | None:
-            import io
-
-            content = raw
-            if zipfile.is_zipfile(io.BytesIO(content)):
-                with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                    step_files = [
-                        n
-                        for n in zf.namelist()
-                        if n.lower().endswith((".step", ".stp"))
-                    ]
-                    if step_files:
-                        step_files.sort(
-                            key=lambda x: (
-                                x.lower() != "assembly.step",
-                                x.lower() != "assembly.stp",
-                                x,
-                            )
-                        )
-                        return zf.read(step_files[0])
-            if content.strip().startswith(b"ISO-10303-21"):
-                return content
+            if raw.lstrip().startswith(b"ISO-10303-21"):
+                return raw
             return None
 
         found_step = False
