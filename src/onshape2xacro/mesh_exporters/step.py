@@ -524,42 +524,42 @@ class StepMeshExporter:
     def export_step(self, output_path: Path) -> Path:
         if self.client is None:
             raise RuntimeError("Cannot export STEP without Onshape client")
-        did, eid = self.cad.document_id, self.cad.element_id
+        did = self.cad.document_id
         wtype = getattr(self.cad, "wtype", None) or getattr(self.cad, "wvm", None)
         wid = getattr(self.cad, "workspace_id", None) or getattr(
             self.cad, "wvm_id", None
         )
-
-        try:
-            resp = self.client.request(
-                HTTP.POST,
-                f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/export/step",
-                body={
-                    "meshParams": {
-                        "angularTolerance": 0.001,
-                        "distanceTolerance": 0.001,
-                        "maximumChordLength": 0.01,
-                        "resolution": "FINE",
-                        "unit": "MILLIMETER",
-                    },
-                    "storeInDocument": True,
-                    "includeExportIds": True,
-                },
+        eid = self.cad.element_id
+        if not wtype or not wid:
+            raise AttributeError(
+                "CAD object missing workspace identifiers (wtype/workspace_id)"
             )
-            resp.raise_for_status()
-        except Exception as e:
-            if "403" in str(e):
-                raise RuntimeError(
-                    "Onshape API returned 403 Forbidden for translation. "
-                    "This usually means your API key lacks 'Write' or 'Translate' permissions. "
-                    "Please check your API key scopes at https://dev-portal.onshape.com/keys"
-                ) from e
-            raise e
 
-        tid = resp.json().get("id")
+        response = self.client.request(
+            HTTP.POST,
+            f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/translations",
+            body={
+                "formatName": "STEP",
+                "stepUnit": "MILLIMETER",
+                "stepVersionString": "AP242",
+                "storeInDocument": False,
+                "includeExportIds": True,
+                "extractAssemblyHierarchy": False,
+                "flattenAssemblies": False,
+            },
+        )
+        response.raise_for_status()
+        translation_id = response.json().get("id")
+        if not translation_id:
+            raise RuntimeError("Missing translation id from Onshape response")
 
+        status = {}
         while True:
-            status = self.client.request(HTTP.GET, f"/api/translations/{tid}").json()
+            status = self.client.request(
+                HTTP.GET,
+                f"/api/translations/{translation_id}",
+                log_response=False,
+            ).json()
             state = status.get("requestState")
             if state == "DONE":
                 break
@@ -567,19 +567,80 @@ class StepMeshExporter:
                 raise RuntimeError(f"STEP translation failed: {state}")
             time.sleep(0.5)
 
-        result_element_ids = status.get("resultElementIds")
-        if result_element_ids:
-            res_eid = result_element_ids[0]
-            dl = self.client.request(
-                HTTP.GET,
-                f"/api/blobelements/d/{did}/{wtype}/{wid}/e/{res_eid}",
-                headers={"Accept": "application/octet-stream"},
-            )
-            if dl.content.lstrip().startswith(b"ISO-10303-21"):
-                output_path.write_bytes(dl.content)
-                return output_path
+        external_ids = status.get("resultExternalDataIds") or []
+        if not external_ids:
+            raise RuntimeError("No external data ids returned for STEP translation")
 
-        raise RuntimeError("No STEP content found in translation results")
+        def _extract_step_from_content(raw: bytes) -> bytes | None:
+            import io
+
+            content = raw
+            if zipfile.is_zipfile(io.BytesIO(content)):
+                with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                    step_files = [
+                        n
+                        for n in zf.namelist()
+                        if n.lower().endswith((".step", ".stp"))
+                    ]
+                    if step_files:
+                        step_files.sort(
+                            key=lambda x: (
+                                x.lower() != "assembly.step",
+                                x.lower() != "assembly.stp",
+                                x,
+                            )
+                        )
+                        return zf.read(step_files[0])
+            if content.strip().startswith(b"ISO-10303-21"):
+                return content
+            return None
+
+        found_step = False
+
+        for file_id in external_ids:
+            download = self.client.request(
+                HTTP.GET,
+                f"/api/documents/d/{did}/externaldata/{file_id}",
+                headers={"Accept": "application/octet-stream"},
+                log_response=False,
+            )
+            download.raise_for_status()
+            content = download.content
+
+            extracted = _extract_step_from_content(content)
+            if extracted is not None:
+                output_path.write_bytes(extracted)
+                found_step = True
+                break
+
+            if content.strip().startswith(b"<?xml") or content.strip().startswith(
+                b"<manifest"
+            ):
+                continue
+
+        if not found_step:
+            try:
+                download = self.client.request(
+                    HTTP.GET,
+                    f"/api/translations/{translation_id}/download",
+                    headers={"Accept": "application/octet-stream"},
+                    log_response=False,
+                )
+                download.raise_for_status()
+                extracted = _extract_step_from_content(download.content)
+                if extracted is not None:
+                    output_path.write_bytes(extracted)
+                    return output_path
+            except Exception:
+                pass
+
+        if found_step:
+            return output_path
+
+        raise RuntimeError(
+            f"No STEP content found in translation results for {output_path.name}. "
+            "Received XML payload (Parasolid tree?) instead."
+        )
 
     def export_link_meshes(
         self,
