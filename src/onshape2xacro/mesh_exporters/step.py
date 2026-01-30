@@ -535,9 +535,14 @@ class StepMeshExporter:
                 HTTP.POST,
                 f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/export/step",
                 body={
-                    "unit": "MILLIMETER",
-                    "stepVersionString": "AP242",
-                    "storeInDocument": False,
+                    "meshParams": {
+                        "angularTolerance": 0.001,
+                        "distanceTolerance": 0.001,
+                        "maximumChordLength": 0.01,
+                        "resolution": "FINE",
+                        "unit": "MILLIMETER",
+                    },
+                    "storeInDocument": True,
                     "includeExportIds": True,
                 },
             )
@@ -562,21 +567,17 @@ class StepMeshExporter:
                 raise RuntimeError(f"STEP translation failed: {state}")
             time.sleep(0.5)
 
-        for file_id in status.get("resultExternalDataIds") or []:
+        result_element_ids = status.get("resultElementIds")
+        if result_element_ids:
+            res_eid = result_element_ids[0]
             dl = self.client.request(
-                HTTP.GET, f"/api/documents/d/{did}/externaldata/{file_id}"
+                HTTP.GET,
+                f"/api/blobelements/d/{did}/{wtype}/{wid}/e/{res_eid}",
+                headers={"Accept": "application/octet-stream"},
             )
             if dl.content.lstrip().startswith(b"ISO-10303-21"):
                 output_path.write_bytes(dl.content)
                 return output_path
-
-        try:
-            dl = self.client.request(HTTP.GET, f"/api/translations/{tid}/download")
-            if dl.content.lstrip().startswith(b"ISO-10303-21"):
-                output_path.write_bytes(dl.content)
-                return output_path
-        except Exception:
-            pass
 
         raise RuntimeError("No STEP content found in translation results")
 
