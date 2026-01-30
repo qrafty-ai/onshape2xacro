@@ -18,6 +18,8 @@ class ExportConfig:
     """Robot name, defaults to assembly name from Onshape."""
     config: Path | None = None
     """Path to YAML override configuration file."""
+    bom: Path | None = None
+    """Path to BOM CSV file for density lookup."""
     max_depth: int = 5
     """Maximum subassembly traversal depth."""
 
@@ -42,6 +44,8 @@ class FetchCadConfig:
     """Onshape document URL pointing to an assembly."""
     output: Path
     """Output directory to save the CAD data (cad.pickle and assembly.zip)."""
+    bom: Path | None = None
+    """Path to BOM CSV file to copy to output directory for inertia calculation."""
     max_depth: int = 5
     """Maximum subassembly traversal depth."""
 
