@@ -298,46 +298,56 @@ class CondensedRobot(Robot):
 
         # 2. BFS to propagate transforms
         roots = [name for name in link_to_rec if name not in has_parent]
-        queue = list(roots)
         for root_name in roots:
             # Root link frame defaults to identity (Assembly origin)
             # Try to find representative part frame for root too
             root_link_frame = np.eye(4)
             if cad:
-                root_link_rec = link_to_rec[root_name]
-                candidates = zip(root_link_rec.keys, root_link_rec.occurrences)
-                for key, occ in candidates:
+                link_rec = link_to_rec[root_name]
+                for key, occ in zip(link_rec.keys, link_rec.occurrences):
                     found = False
-                    try:
-                        # Try get_transform
-                        if hasattr(cad, "get_transform"):
-                            root_link_frame = cad.get_transform(occ)
-                            # Normalize
-                            if not np.allclose(
-                                root_link_frame[3, :], [0, 0, 0, 1]
-                            ) and np.allclose(root_link_frame[:, 3], [0, 0, 0, 1]):
-                                root_link_frame = root_link_frame.T
-                            found = True
-                    except Exception:
-                        pass
+                    res_occ, res_key = occ, key
+                    if isinstance(occ, str) and hasattr(cad, "occurrences"):
+                        for k in cad.occurrences:
+                            if str(k) == occ:
+                                res_occ = k
+                                break
+                    if isinstance(key, str) and hasattr(cad, "parts"):
+                        for k in cad.parts:
+                            if str(k) == key:
+                                res_key = k
+                                break
+
+                    if hasattr(cad, "get_transform"):
+                        tf = cad.get_transform(res_occ)
+                        if tf is not None:
+                            if not np.allclose(tf[3, :], [0, 0, 0, 1]) and np.allclose(
+                                tf[:, 3], [0, 0, 0, 1]
+                            ):
+                                tf = tf.T
+                            root_link_frame, found = tf, True
 
                     if not found and hasattr(cad, "parts"):
-                        if key in cad.parts:
-                            root_link_frame = _part_world_matrix(cad.parts[key])
-                            found = True
-                        else:
+                        if res_key in cad.parts:
+                            root_link_frame, found = (
+                                _part_world_matrix(cad.parts[res_key]),
+                                True,
+                            )
+                        if not found:
                             for p_key, p_part in cad.parts.items():
                                 if occ_match(p_key.path, occ) or occ_match(
                                     getattr(p_key, "name_path", []), occ
                                 ):
-                                    root_link_frame = _part_world_matrix(p_part)
-                                    found = True
+                                    root_link_frame, found = (
+                                        _part_world_matrix(p_part),
+                                        True,
+                                    )
                                     break
                     if found:
                         break
-
             link_to_rec[root_name].frame_transform = root_link_frame
 
+        queue = list(roots)
         visited = set(roots)
         while queue:
             curr_name = queue.pop(0)

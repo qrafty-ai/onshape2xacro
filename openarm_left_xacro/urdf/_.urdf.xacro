@@ -1,0 +1,8 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="_">
+  <xacro:property name="joint_limits_file" value="${load_yaml('../config/joint_limits.yaml')}"/>
+  <xacro:property name="joint_limits" value="${joint_limits_file['joint_limits']}"/>
+  <xacro:property name="inertials_file" value="${load_yaml('../config/inertials.yaml')}"/>
+  <xacro:property name="inertials" value="${inertials_file['inertials']}"/>
+  <xacro:include filename="_.xacro"/>
+  <xacro:_ prefix=""/>
+</robot>

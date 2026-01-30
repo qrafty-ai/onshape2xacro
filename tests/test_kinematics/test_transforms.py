@@ -15,9 +15,9 @@ def test_condensed_robot_transforms():
     - Joint is translated by [0.1, 0, 0] relative to Parent Part.
 
     Expected:
-    - parentlink.frame_transform = Identity
+    - parentlink.frame_transform = T_WP_parent = Translation([0, 1, 0])
     - childlink.frame_transform = T_WP_parent @ T_PJ = Translation([0.1, 1.0, 0.0])
-    - Joint.origin = inv(parentlink.frame_transform) @ childlink.frame_transform = Translation([0.1, 1.0, 0.0])
+    - Joint.origin = inv(parentlink.frame_transform) @ childlink.frame_transform = T_PJ = Translation([0.1, 0, 0])
     """
     # 1. Create a simple 2-link robot (Parent -> Joint -> Child).
     graph = MagicMock()
@@ -83,6 +83,8 @@ def test_condensed_robot_transforms():
 
     cad = MagicMock()
     cad.parts = {"p_parent": MockPart("occ_parent", T_WP_parent)}
+    cad.occurrences = {}
+    cad.get_transform.return_value = T_WP_parent
 
     # 4. Run CondensedRobot.from_graph
     robot = CondensedRobot.from_graph(graph, cad=cad)
@@ -96,8 +98,8 @@ def test_condensed_robot_transforms():
     child_link = links["childlink"]
 
     # - LinkRecord.frame_transform is correctly calculated.
-    # Root link (ParentLink) should have identity
-    np.testing.assert_allclose(parent_link.frame_transform, np.eye(4))
+    # Root link (ParentLink) should now have the part's world transform
+    np.testing.assert_allclose(parent_link.frame_transform, T_WP_parent)
 
     # Child link frame_transform should be T_WJ = T_WP_parent @ T_PJ
     T_WJ = T_WP_parent @ T_PJ
@@ -108,7 +110,7 @@ def test_condensed_robot_transforms():
     assert len(edges) == 1
     joint_rec = edges[0][2]["joint"]
 
-    # Joint origin translation should be [0.1, 1.0, 0.0]
-    expected_xyz = np.array([0.1, 1.0, 0.0])
+    # Joint origin translation should be [0.1, 0, 0] (local offset)
+    expected_xyz = np.array([0.1, 0.0, 0.0])
     np.testing.assert_allclose(joint_rec.origin.xyz, expected_xyz)
     np.testing.assert_allclose(joint_rec.origin.rpy, [0.0, 0.0, 0.0], atol=1e-7)
