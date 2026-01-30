@@ -76,6 +76,7 @@ def _try_get_client() -> Client | None:
 def run_export(config: ExportConfig):
     """Run the complete export pipeline."""
     url_path = Path(config.url)
+    bom_path = config.bom
     if url_path.is_dir() and (url_path / "cad.pickle").exists():
         import pickle
 
@@ -83,13 +84,14 @@ def run_export(config: ExportConfig):
         with open(url_path / "cad.pickle", "rb") as f:
             cad = pickle.load(f)
         client = _try_get_client()
-        # Check for assembly.step (new format) or assembly.zip (old format)
         if (url_path / "assembly.step").exists():
             asset_path = url_path / "assembly.step"
         elif (url_path / "assembly.zip").exists():
             asset_path = url_path / "assembly.zip"
         else:
             asset_path = None
+        if bom_path is None and (url_path / "bom.csv").exists():
+            bom_path = url_path / "bom.csv"
     else:
         client, cad = _get_client_and_cad(config.url, config.max_depth)
         asset_path = None
@@ -114,7 +116,13 @@ def run_export(config: ExportConfig):
     # 6. Serialize and Save
     print(f"Serializing to {config.output}...")
     serializer = XacroSerializer()
-    serializer.save(robot, str(config.output), download_assets=True, config=override)
+    serializer.save(
+        robot,
+        str(config.output),
+        download_assets=True,
+        config=override,
+        bom_path=bom_path,
+    )
     print("Export complete!")
 
 
@@ -134,6 +142,7 @@ def run_visualize(config: VisualizeConfig):
 def run_fetch_cad(config: FetchCadConfig):
     """Fetch CAD data and save to a directory."""
     import pickle
+    import shutil
     from onshape2xacro.mesh_exporters.step import StepMeshExporter
 
     client, cad = _get_client_and_cad(config.url, config.max_depth)
@@ -148,6 +157,14 @@ def run_fetch_cad(config: FetchCadConfig):
     print(f"Exporting STEP assembly to {output_dir / 'assembly.step'}...")
     exporter = StepMeshExporter(client, cad)
     exporter.export_step(output_dir / "assembly.step")
+
+    if config.bom:
+        if not config.bom.exists():
+            print(f"Warning: BOM file not found: {config.bom}")
+        else:
+            dest_bom = output_dir / "bom.csv"
+            shutil.copy(config.bom, dest_bom)
+            print(f"Copied BOM to {dest_bom}")
 
     print(f"Fetch CAD complete! Data saved to {output_dir}")
 

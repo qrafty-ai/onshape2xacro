@@ -1,7 +1,7 @@
 """Compute mass properties from STEP geometry using CadQuery."""
 
 from pathlib import Path
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
 import logging
 
 if TYPE_CHECKING:
@@ -219,6 +219,43 @@ class InertiaCalculator:
             iyz=inertia_matrix[1][2] * scale,
         )
 
+    def _apply_parallel_axis_theorem(
+        self, props: InertialProperties, link_com: Tuple[float, float, float]
+    ) -> InertialProperties:
+        """
+        Apply parallel axis theorem to shift inertia from part COM to link COM.
+
+        Args:
+            props: Inertial properties about the part's own COM
+            link_com: Center of mass of the combined link (x, y, z) in meters
+
+        Returns:
+            New InertialProperties with inertia shifted to link COM
+        """
+        dx = props.com[0] - link_com[0]
+        dy = props.com[1] - link_com[1]
+        dz = props.com[2] - link_com[2]
+
+        m = props.mass
+
+        ixx_shifted = props.ixx + m * (dy * dy + dz * dz)
+        iyy_shifted = props.iyy + m * (dx * dx + dz * dz)
+        izz_shifted = props.izz + m * (dx * dx + dy * dy)
+        ixy_shifted = props.ixy - m * dx * dy
+        ixz_shifted = props.ixz - m * dx * dz
+        iyz_shifted = props.iyz - m * dy * dz
+
+        return InertialProperties(
+            mass=props.mass,
+            com=props.com,
+            ixx=ixx_shifted,
+            iyy=iyy_shifted,
+            izz=izz_shifted,
+            ixy=ixy_shifted,
+            ixz=ixz_shifted,
+            iyz=iyz_shifted,
+        )
+
     def _compute_with_known_mass(self, solid, known_mass: float) -> InertialProperties:
         """Compute properties when mass is known from BOM."""
         volume_mm3 = solid.Volume()
@@ -231,12 +268,50 @@ class InertiaCalculator:
 
         return self._compute_solid_properties(solid, effective_density)
 
+    def _validate_inertia(self, props: InertialProperties) -> list[str]:
+        """
+        Validate inertia tensor for physical consistency.
+
+        Args:
+            props: Inertial properties to validate
+
+        Returns:
+            List of warning messages (empty if valid)
+        """
+        warnings = []
+
+        if props.ixx <= 0 or props.iyy <= 0 or props.izz <= 0:
+            warnings.append(
+                f"Invalid inertia: diagonal elements must be positive (ixx={props.ixx:.3e}, iyy={props.iyy:.3e}, izz={props.izz:.3e})"
+            )
+
+        if props.ixx == 0 or props.iyy == 0 or props.izz == 0:
+            warnings.append(
+                "Warning: one or more diagonal inertia elements is exactly zero"
+            )
+
+        if props.ixx + props.iyy < props.izz:
+            warnings.append(
+                f"Triangle inequality violated: ixx+iyy < izz ({props.ixx:.3e}+{props.iyy:.3e} < {props.izz:.3e})"
+            )
+        if props.ixx + props.izz < props.iyy:
+            warnings.append(
+                f"Triangle inequality violated: ixx+izz < iyy ({props.ixx:.3e}+{props.izz:.3e} < {props.iyy:.3e})"
+            )
+        if props.iyy + props.izz < props.ixx:
+            warnings.append(
+                f"Triangle inequality violated: iyy+izz < ixx ({props.iyy:.3e}+{props.izz:.3e} < {props.ixx:.3e})"
+            )
+
+        return warnings
+
     def compute_from_step_with_bom(
         self,
         step_path: Path,
         bom_entries: Dict[str, "BOMEntry"],
         link_name: str,
         report: "InertiaReport",
+        part_metadata: list[Dict[str, str]] | None = None,
     ) -> InertialProperties:
         """
         Compute inertial properties using BOM data for per-part mass.
@@ -251,6 +326,7 @@ class InertiaCalculator:
             bom_entries: Dict of part_name -> BOMEntry from BOM CSV
             link_name: Name of this link (for warnings)
             report: InertiaReport to collect warnings
+            part_metadata: Optional list of dicts with part_id and part_name for each solid
 
         Returns:
             Aggregated InertialProperties for the link
@@ -281,74 +357,252 @@ class InertiaCalculator:
         total_ixz = 0.0
         total_iyz = 0.0
 
+        from .report import PartDebugInfo
+
+        part_debug_infos = []
+
+        # Match BOM entry ONCE per link (not per solid)
+        bom_entry = bom_entries.get(link_name)
+        match_type = "none"
+        bom_match_name = None
+
+        if bom_entry:
+            match_type = "exact"
+            bom_match_name = link_name
+        else:
+            # Fuzzy match: find BOM entry name in link name
+            for bom_name in bom_entries:
+                if bom_name.lower() in link_name.lower():
+                    bom_entry = bom_entries[bom_name]
+                    match_type = "fuzzy"
+                    bom_match_name = bom_name
+                    break
+
+        # First pass: compute properties using density for all solids
+        # This gives us the relative mass distribution
+        solid_props_list = []
         for i, solid in enumerate(solids):
-            # Try to match to BOM by index (STEP doesn't preserve part names well)
-            # For now, use link_name as the primary key since each link STEP
-            # typically contains parts that should share the link's BOM entry
-            part_name = f"{link_name}_solid_{i}"
+            volume_mm3 = solid.Volume()
+            volume_cm3 = volume_mm3 / 1000.0
 
-            # Try to find matching BOM entry
-            bom_entry = bom_entries.get(link_name)
+            # Get part metadata if available
+            part_meta = (
+                part_metadata[i] if part_metadata and i < len(part_metadata) else None
+            )
+            part_meta.get("part_id") if part_meta else None
+            part_name_full = part_meta.get("part_name") if part_meta else None
 
-            if bom_entry is None:
-                # Try fuzzy match on link name components
+            # Use part_name as the primary identifier (it contains the actual part name)
+            # Extract the leaf name from the full path (e.g., "sub-asm-base_1_square_base_plate_1" -> "square_base_plate")
+            import re
+
+            part_id = None
+            if part_name_full:
+                # Remove instance suffix _\d+$
+                part_id = re.sub(r"_\d+$", "", part_name_full)
+                # Try to extract leaf name by removing parent prefix
+                parts = part_id.split("_")
+                # Look for common assembly prefixes (parts[0] might be "sub-asm-xxx")
+                if len(parts) > 2 and (
+                    parts[0].startswith("sub") or parts[0].startswith("asm")
+                ):
+                    # Skip "sub-asm-xxx_1" prefix pattern
+                    for j in range(len(parts)):
+                        if parts[j].isdigit():
+                            part_id = (
+                                "_".join(parts[j + 1 :])
+                                if j + 1 < len(parts)
+                                else part_id
+                            )
+                            break
+
+            if not part_id:
+                part_id = f"solid_{i}"
+
+            part_bom_entry = None
+            part_match_type = "none"
+            part_bom_match_name = None
+
+            def normalize_name(name: str) -> str:
+                return name.lower().replace(" ", "_").replace(".", "")
+
+            part_bom_entry = bom_entries.get(part_id)
+            if part_bom_entry:
+                part_match_type = "exact"
+                part_bom_match_name = part_id
+
+            if not part_bom_entry and part_id:
+                normalized_part = normalize_name(part_id)
                 for bom_name in bom_entries:
-                    if (
-                        bom_name.lower() in link_name.lower()
-                        or link_name.lower() in bom_name.lower()
-                    ):
-                        bom_entry = bom_entries[bom_name]
+                    if normalize_name(bom_name) == normalized_part:
+                        part_bom_entry = bom_entries[bom_name]
+                        part_match_type = "exact"
+                        part_bom_match_name = bom_name
                         break
 
-            if bom_entry and bom_entry.has_mass:
-                # Priority 1: Use Onshape-calculated mass
-                # Divide mass among solids if multiple
-                solid_mass = bom_entry.mass_kg / len(solids)
-                props = self._compute_with_known_mass(solid, solid_mass)
+            if not part_bom_entry and part_name_full:
+                # Try fuzzy match
+                for bom_name in bom_entries:
+                    if (
+                        bom_name.lower() in part_name_full.lower()
+                        or part_name_full.lower() in bom_name.lower()
+                    ):
+                        part_bom_entry = bom_entries[bom_name]
+                        part_match_type = "fuzzy"
+                        part_bom_match_name = bom_name
+                        break
+                    if part_bom_entry:
+                        break
 
-            elif bom_entry and bom_entry.has_material:
-                # Priority 2: Estimate from material density
-                density = self._get_density(bom_entry.material)
+            # Determine which density to use (prefer part-specific BOM, fallback to link-level)
+            effective_bom = part_bom_entry or bom_entry
+
+            # Priority 1: If BOM has mass, use mass/volume to get effective density
+            if effective_bom and effective_bom.has_mass:
+                volume_m3 = volume_cm3 * 1e-6
+                if volume_m3 > 0:
+                    density = effective_bom.mass_kg / volume_m3
+                    material = (
+                        effective_bom.material if effective_bom.has_material else None
+                    )
+                else:
+                    # Volume is zero - this shouldn't happen but handle gracefully
+                    density = self.default_density
+                    material = None
+            # Priority 2: If BOM has material (but no mass), use material density
+            elif effective_bom and effective_bom.has_material:
+                material = effective_bom.material
+                density = self._get_density(material)
                 if density is None:
                     density = self.default_density
-                props = self._compute_solid_properties(solid, density)
-
-            elif bom_entry:
-                # Priority 3: No mass, no material - zero mass with warning
-                report.add_warning(
-                    link_name, part_name, "No mass or material assigned in BOM"
-                )
-                props = InertialProperties(
-                    mass=0.0, com=(0.0, 0.0, 0.0), ixx=0.0, iyy=0.0, izz=0.0
-                )
+            # Priority 3: No BOM data, use default
             else:
-                # No BOM entry found - use default density with warning
-                report.add_warning(
-                    link_name,
-                    part_name,
-                    "Part not found in BOM, using default density",
+                material = None
+                density = self.default_density
+
+            props = self._compute_solid_properties(solid, density)
+            solid_props_list.append(
+                (
+                    props,
+                    volume_cm3,
+                    material,
+                    part_id,
+                    part_name_full,
+                    part_bom_entry,
+                    part_match_type,
+                    part_bom_match_name,
                 )
-                props = self._compute_solid_properties(solid, self.default_density)
+            )
 
-            # Aggregate
-            total_mass += props.mass
-            if props.mass > 0:
+        for i, (
+            props,
+            volume_cm3,
+            material,
+            part_id,
+            part_name,
+            part_bom_entry,
+            part_match_type,
+            part_bom_match_name,
+        ) in enumerate(solid_props_list):
+            if not part_id:
+                part_id = f"solid_{i}"
+            part_warnings = []
+
+            if part_match_type == "fuzzy":
+                part_warnings.append(
+                    f"Fuzzy matched to BOM entry '{part_bom_match_name}'"
+                )
+
+            if part_bom_entry and part_bom_entry.has_mass:
+                mass_source = "BOM Mass"
+            elif part_bom_entry and part_bom_entry.has_material:
+                mass_source = "Material Density"
+                if self._get_density(material) is None:
+                    mass_source = "Default Density"
+                    part_warnings.append(
+                        f"Material '{material}' unknown, used default density"
+                    )
+            else:
+                mass_source = "Default Density"
+                if not part_bom_entry:
+                    part_warnings.append("Not found in BOM")
+                    report.add_warning(
+                        link_name,
+                        part_id,
+                        "Part not found in BOM, using default density",
+                    )
+
+            final_props = props
+
+            debug_info = PartDebugInfo(
+                part_id=part_id,
+                bom_match=part_bom_match_name or bom_match_name,
+                match_type=part_match_type if part_match_type != "none" else match_type,
+                mass_source=mass_source,
+                material=material,
+                volume_cm3=volume_cm3,
+                mass_kg=final_props.mass,
+                ixx=final_props.ixx,
+                iyy=final_props.iyy,
+                izz=final_props.izz,
+                warnings=part_warnings,
+            )
+            part_debug_infos.append(debug_info)
+
+            total_mass += final_props.mass
+            if final_props.mass > 0:
                 for j in range(3):
-                    weighted_com[j] += props.com[j] * props.mass
-            total_ixx += props.ixx
-            total_iyy += props.iyy
-            total_izz += props.izz
-            total_ixy += props.ixy
-            total_ixz += props.ixz
-            total_iyz += props.iyz
+                    weighted_com[j] += final_props.com[j] * final_props.mass
 
-        # Finalize COM (mass-weighted average)
+        report.add_link_parts(link_name, part_debug_infos)
+
         if total_mass > 0:
             com = tuple(c / total_mass for c in weighted_com)
         else:
             com = (0.0, 0.0, 0.0)
 
-        return InertialProperties(
+        total_ixx = 0.0
+        total_iyy = 0.0
+        total_izz = 0.0
+        total_ixy = 0.0
+        total_ixz = 0.0
+        total_iyz = 0.0
+
+        for i, (
+            props,
+            volume_cm3,
+            material,
+            part_id,
+            part_name,
+            part_bom_entry,
+            part_match_type,
+            part_bom_match_name,
+        ) in enumerate(solid_props_list):
+            if part_bom_entry and part_bom_entry.has_mass:
+                volume_m3 = volume_cm3 * 1e-6
+                if volume_m3 > 0:
+                    effective_density = part_bom_entry.mass_kg / volume_m3
+                else:
+                    effective_density = self.default_density
+
+                final_props = self._compute_solid_properties(
+                    solids[i], effective_density
+                )
+            elif part_bom_entry and part_bom_entry.has_material:
+                final_props = props
+            else:
+                final_props = props
+
+            shifted_props = self._apply_parallel_axis_theorem(final_props, com)
+
+            total_ixx += shifted_props.ixx
+            total_iyy += shifted_props.iyy
+            total_izz += shifted_props.izz
+            total_ixy += shifted_props.ixy
+            total_ixz += shifted_props.ixz
+            total_iyz += shifted_props.iyz
+
+        final_props = InertialProperties(
             mass=total_mass,
             com=com,
             ixx=total_ixx,
@@ -358,3 +612,9 @@ class InertiaCalculator:
             ixz=total_ixz,
             iyz=total_iyz,
         )
+
+        validation_warnings = self._validate_inertia(final_props)
+        for warning in validation_warnings:
+            report.add_warning(link_name, "link_total", warning)
+
+        return final_props

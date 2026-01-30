@@ -4,7 +4,7 @@ from .types import InertialProperties
 from .calculator import InertiaCalculator
 from .writer import InertiaConfigWriter
 from .bom import BOMParser, BOMEntry
-from .report import InertiaReport, PartWarning
+from .report import InertiaReport, PartWarning, PartDebugInfo
 
 __all__ = [
     "InertialProperties",
@@ -14,4 +14,5 @@ __all__ = [
     "BOMEntry",
     "InertiaReport",
     "PartWarning",
+    "PartDebugInfo",
 ]

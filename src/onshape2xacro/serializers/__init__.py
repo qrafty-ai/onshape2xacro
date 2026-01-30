@@ -59,6 +59,7 @@ class XacroSerializer(RobotSerializer):
         file_path: str,
         download_assets: bool = True,
         mesh_dir: Optional[str] = None,
+        bom_path: Optional[Path] = None,
         **options: Any,
     ):
         """Save robot to hierarchical xacro structure."""
@@ -75,11 +76,47 @@ class XacroSerializer(RobotSerializer):
         for d in [urdf_dir, mesh_dir_path, config_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-        # 1. Export meshes (Stage 6)
+        # 1. Export meshes (Stage 6) & Compute Inertials
         mesh_map = {}
         missing_meshes = {}
+        computed_inertials = {}
+
+        # Prepare link records
+        link_records = {}
+        for _, data in robot.nodes(data=True):
+            link = data.get("link") or data.get("data")
+            if link:
+                link_records[sanitize_name(link.name)] = link
+
         if download_assets:
-            mesh_map, missing_meshes = self._export_meshes(robot, mesh_dir_path)
+            # We need to manually invoke exporter logic here to support BOM/inertials
+            # Previously this called _export_meshes, but we need the new return values
+            client = getattr(robot, "client", None)
+            cad = getattr(robot, "cad", None)
+            asset_path = getattr(robot, "asset_path", None)
+
+            if (client and cad) or (cad and asset_path):
+                exporter = StepMeshExporter(client, cad, asset_path=asset_path)
+                mesh_map, missing_meshes, report = exporter.export_link_meshes(
+                    link_records, mesh_dir_path, bom_path=bom_path
+                )
+
+            if (client and cad) or (cad and asset_path):
+                exporter = StepMeshExporter(client, cad, asset_path=asset_path)
+                mesh_map, missing_meshes, report = exporter.export_link_meshes(
+                    link_records, mesh_dir_path, bom_path=bom_path
+                )
+
+                if report and report.link_properties:
+                    for name, props in report.link_properties.items():
+                        computed_inertials[name] = props.to_yaml_dict()
+
+                if report:
+                    report.print_summary()
+
+                    if report.link_parts:
+                        debug_table_path = out_dir / "inertia_debug.md"
+                        report.save_debug_table(debug_table_path)
 
         # 2. Group by subassembly (Stage 4)
         module_groups = self._group_by_subassembly(robot)
@@ -181,7 +218,7 @@ class XacroSerializer(RobotSerializer):
             f.write(entry_point_content)
 
         # 5. Generate default configs (Stage 7)
-        self._generate_default_configs(robot, config_dir, config)
+        self._generate_default_configs(robot, config_dir, config, computed_inertials)
 
         # 6. Write missing meshes prompt file if any parts failed
         if missing_meshes:
@@ -527,9 +564,12 @@ class XacroSerializer(RobotSerializer):
         robot: "Robot",
         config_dir: Path,
         config: Optional[ConfigOverride] = None,
+        computed_inertials: Optional[Dict[str, Any]] = None,
     ):
         if config is None:
             config = ConfigOverride()
+        if computed_inertials is None:
+            computed_inertials = {}
 
         joint_limits = {}
         inertials = {}
@@ -577,19 +617,22 @@ class XacroSerializer(RobotSerializer):
             if link:
                 name = sanitize_name(link.name)
 
-                default_inertial = {
-                    "mass": 1.0,
-                    "origin": {"xyz": "0 0 0", "rpy": "0 0 0"},
-                    "inertia": {
-                        "ixx": 0.01,
-                        "iyy": 0.01,
-                        "izz": 0.01,
-                        "ixy": 0,
-                        "ixz": 0,
-                        "iyz": 0,
-                    },
-                }
-                inertials[name] = config.get_inertial(name, default_inertial)
+                if name in computed_inertials:
+                    inertials[name] = computed_inertials[name]
+                else:
+                    default_inertial = {
+                        "mass": 1.0,
+                        "origin": {"xyz": "0 0 0", "rpy": "0 0 0"},
+                        "inertia": {
+                            "ixx": 0.01,
+                            "iyy": 0.01,
+                            "izz": 0.01,
+                            "ixy": 0,
+                            "ixz": 0,
+                            "iyz": 0,
+                        },
+                    }
+                    inertials[name] = config.get_inertial(name, default_inertial)
 
         with open(config_dir / "joint_limits.yaml", "w") as f:
             yaml.dump({"joint_limits": joint_limits}, f)

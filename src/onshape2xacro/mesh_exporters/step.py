@@ -177,19 +177,25 @@ def _export_name_from_filename(filename: str) -> str:
 
 
 def _matrix_to_trsf(matrix: np.ndarray) -> gp_Trsf:
+    from scipy.spatial.transform import Rotation
+
+    rot_3x3 = matrix[:3, :3]
+    r = Rotation.from_matrix(rot_3x3)
+    rot_normalized = r.as_matrix()
+
     trsf = gp_Trsf()
     trsf.SetValues(
-        matrix[0][0],
-        matrix[0][1],
-        matrix[0][2],
+        rot_normalized[0][0],
+        rot_normalized[0][1],
+        rot_normalized[0][2],
         matrix[0][3],
-        matrix[1][0],
-        matrix[1][1],
-        matrix[1][2],
+        rot_normalized[1][0],
+        rot_normalized[1][1],
+        rot_normalized[1][2],
         matrix[1][3],
-        matrix[2][0],
-        matrix[2][1],
-        matrix[2][2],
+        rot_normalized[2][0],
+        rot_normalized[2][1],
+        rot_normalized[2][2],
         matrix[2][3],
     )
     return trsf
@@ -637,17 +643,46 @@ class StepMeshExporter:
         )
 
     def export_link_meshes(
-        self, link_records: Dict[str, Any], mesh_dir: Path
-    ) -> Tuple[Dict[str, str | Dict[str, str]], Dict[str, List[Dict[str, str]]]]:
+        self,
+        link_records: Dict[str, Any],
+        mesh_dir: Path,
+        bom_path: Optional[Path] = None,
+    ) -> Tuple[
+        Dict[str, str | Dict[str, str]],
+        Dict[str, List[Dict[str, str]]],
+        Optional["InertiaReport"],
+    ]:
         """Export link meshes from STEP files.
 
         Returns:
-            Tuple of (mesh_map, missing_meshes) where:
+            Tuple of (mesh_map, missing_meshes, inertia_report) where:
             - mesh_map: Dict mapping link_name -> stl filename
             - missing_meshes: Dict mapping link_name -> list of missing part info dicts
-              Each missing part dict has keys: part_id, export_name, part_name, reason
+            - inertia_report: Optional InertiaReport containing computed mass properties
         """
+        from onshape2xacro.inertia import (
+            InertiaCalculator,
+            InertiaReport,
+            BOMParser,
+        )
+
         mesh_dir.mkdir(parents=True, exist_ok=True)
+
+        report = None
+        calc = None
+        bom_entries = {}
+
+        if bom_path:
+            bom_path = Path(bom_path) if isinstance(bom_path, str) else bom_path
+            report = InertiaReport()
+            calc = InertiaCalculator()
+            if bom_path.exists():
+                parser = BOMParser()
+                bom_entries = parser.parse(bom_path)
+                logger.info(f"Loaded {len(bom_entries)} entries from BOM")
+            else:
+                logger.warning(f"BOM file not found: {bom_path}")
+
         if self.asset_path and self.asset_path.exists():
             asset_path = self.asset_path
         else:
@@ -699,8 +734,11 @@ class StepMeshExporter:
                 builder.MakeCompound(compound)
                 link_missing_parts: List[Dict[str, str]] = []
                 has_valid_shapes = False
+                part_metadata_list: List[Dict[str, str]] = []
 
-                for key in keys:
+                part_names_list = getattr(link, "part_names", [])
+
+                for idx, key in enumerate(keys):
                     part = self.cad.parts.get(key)
                     if part is None or getattr(part, "isRigidAssembly", False):
                         continue
@@ -728,6 +766,16 @@ class StepMeshExporter:
                     builder.Add(compound, transformed)
                     has_valid_shapes = True
 
+                    part_name_from_list = (
+                        part_names_list[idx] if idx < len(part_names_list) else None
+                    )
+                    part_metadata_list.append(
+                        {
+                            "part_id": getattr(part, "partId", str(key)),
+                            "part_name": part_name_from_list or str(key),
+                        }
+                    )
+
                 if link_missing_parts:
                     missing_meshes[link_name] = link_missing_parts
 
@@ -737,6 +785,35 @@ class StepMeshExporter:
                     # Generate intermediate high-res STL
                     temp_stl = mesh_dir / f"{link_name}_raw.stl"
                     stl_writer.Write(compound, str(temp_stl))
+
+                    # Compute Inertia if requested
+                    if report is not None and calc is not None:
+                        try:
+                            temp_step_inertia = mesh_dir / f"{link_name}_inertia.step"
+                            step_writer = STEPControl_Writer()
+                            step_writer.Transfer(compound, STEPControl_AsIs)
+                            step_writer.Write(str(temp_step_inertia))
+
+                            props = calc.compute_from_step_with_bom(
+                                temp_step_inertia,
+                                bom_entries,
+                                link_name,
+                                report,
+                                part_metadata=part_metadata_list,
+                            )
+
+                            if props:
+                                report.link_properties[link_name] = props
+                                logger.info(
+                                    f"Computed inertia for {link_name}: mass={props.mass:.4f} kg"
+                                )
+
+                            if temp_step_inertia.exists():
+                                temp_step_inertia.unlink()
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to compute inertia for {link_name}: {e}"
+                            )
 
                 # Process with trimesh and pymeshlab
                 try:
@@ -1032,8 +1109,11 @@ class StepMeshExporter:
             builder.MakeCompound(compound)
             link_missing_parts: List[Dict[str, str]] = []
             has_valid_shapes = False
+            part_metadata_list: List[Dict[str, str]] = []
 
-            for key in keys:
+            part_names_list = getattr(link, "part_names", [])
+
+            for idx, key in enumerate(keys):
                 part = self.cad.parts.get(key)
                 if part is None or getattr(part, "isRigidAssembly", False):
                     continue
@@ -1094,6 +1174,16 @@ class StepMeshExporter:
                 builder.Add(compound, shape.Located(rel_loc))
                 has_valid_shapes = True
 
+                part_name_from_list = (
+                    part_names_list[idx] if idx < len(part_names_list) else None
+                )
+                part_metadata_list.append(
+                    {
+                        "part_id": getattr(part, "partId", str(key)),
+                        "part_name": part_name_from_list or str(key),
+                    }
+                )
+
             if link_missing_parts:
                 missing_meshes[link_name] = link_missing_parts
 
@@ -1103,6 +1193,34 @@ class StepMeshExporter:
                 # Generate intermediate high-res STL
                 temp_stl = mesh_dir / f"{link_name}_raw.stl"
                 stl_writer.Write(compound, str(temp_stl))
+
+                if report is not None and calc is not None:
+                    try:
+                        temp_step_inertia = mesh_dir / f"{link_name}_inertia.step"
+                        step_writer = STEPControl_Writer()
+                        step_writer.Transfer(compound, STEPControl_AsIs)
+                        step_writer.Write(str(temp_step_inertia))
+
+                        props = calc.compute_from_step_with_bom(
+                            temp_step_inertia,
+                            bom_entries,
+                            link_name,
+                            report,
+                            part_metadata=part_metadata_list,
+                        )
+
+                        if props:
+                            report.link_properties[link_name] = props
+                            logger.info(
+                                f"Computed inertia for {link_name}: mass={props.mass:.4f} kg"
+                            )
+
+                        if temp_step_inertia.exists():
+                            temp_step_inertia.unlink()
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to compute inertia for {link_name}: {e}"
+                        )
 
                 # Process with trimesh and pymeshlab
                 try:
@@ -1169,95 +1287,4 @@ class StepMeshExporter:
                         temp_stl.rename(final_stl)
                     mesh_map[link_name] = final_stl.name
 
-        return mesh_map, missing_meshes
-
-    def compute_link_inertials(
-        self,
-        link_records: Dict[str, Any],
-        output_dir: Path,
-        bom_path: Optional[Path] = None,
-        density: float = 1000.0,
-    ) -> "InertiaReport":
-        """
-        Compute inertial properties for each link.
-
-        Args:
-            link_records: Dict mapping link names to link data (must have 'compound' key)
-            output_dir: Directory for intermediate files and config output
-            bom_path: Optional path to Onshape BOM CSV export
-            density: Default material density in kg/m³ (used when no BOM)
-
-        Returns:
-            InertiaReport with results and warnings
-        """
-        from onshape2xacro.inertia import (
-            InertiaCalculator,
-            InertiaConfigWriter,
-            BOMParser,
-            InertiaReport,
-        )
-
-        calc = InertiaCalculator(default_density=density)
-        writer = InertiaConfigWriter()
-        report = InertiaReport()
-
-        # Parse BOM if provided
-        bom_entries = {}
-        if bom_path and bom_path.exists():
-            parser = BOMParser()
-            bom_entries = parser.parse(bom_path)
-            logger.info(f"Loaded {len(bom_entries)} entries from BOM")
-
-        # Create links directory for intermediate STEP files
-        links_dir = output_dir / "links"
-        links_dir.mkdir(parents=True, exist_ok=True)
-
-        for link_name, link_data in link_records.items():
-            compound = link_data.get("compound")
-            if compound is None:
-                report.add_warning(link_name, link_name, "No geometry found for link")
-                continue
-
-            # Export link compound to STEP file
-            temp_step = links_dir / f"{link_name}.step"
-            try:
-                step_writer = STEPControl_Writer()
-                step_writer.Transfer(compound, STEPControl_AsIs)
-                status = step_writer.Write(str(temp_step))
-                if status != 1:
-                    report.add_warning(
-                        link_name, link_name, "Failed to write STEP file"
-                    )
-                    continue
-            except Exception as e:
-                report.add_warning(link_name, link_name, f"Error exporting STEP: {e}")
-                continue
-
-            # Compute inertia
-            try:
-                if bom_entries:
-                    props = calc.compute_from_step_with_bom(
-                        temp_step, bom_entries, link_name, report
-                    )
-                else:
-                    props = calc.compute_from_step(temp_step, material="default")
-
-                report.link_properties[link_name] = props
-                logger.info(
-                    f"Computed inertia for {link_name}: mass={props.mass:.4f} kg"
-                )
-            except Exception as e:
-                report.add_warning(
-                    link_name, link_name, f"Failed to compute inertia: {e}"
-                )
-
-        # Write config YAML
-        if report.link_properties:
-            config_dir = output_dir / "config"
-            writer.write(report.link_properties, config_dir)
-            logger.info(f"Wrote inertials.yaml to {config_dir}")
-
-        # Print warning summary
-        report.print_summary()
-
-        return report
+        return mesh_map, missing_meshes, report
