@@ -4,7 +4,10 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from onshape2xacro.inertia import InertiaReport
 
 import numpy as np
 from onshape_robotics_toolkit.connect import Client, HTTP
@@ -22,6 +25,8 @@ from OCP.TopoDS import TopoDS_Compound
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.StlAPI import StlAPI_Writer
 from OCP.gp import gp_Trsf
+from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
+from loguru import logger
 import trimesh
 import pymeshlab
 
@@ -1165,3 +1170,94 @@ class StepMeshExporter:
                     mesh_map[link_name] = final_stl.name
 
         return mesh_map, missing_meshes
+
+    def compute_link_inertials(
+        self,
+        link_records: Dict[str, Any],
+        output_dir: Path,
+        bom_path: Optional[Path] = None,
+        density: float = 1000.0,
+    ) -> "InertiaReport":
+        """
+        Compute inertial properties for each link.
+
+        Args:
+            link_records: Dict mapping link names to link data (must have 'compound' key)
+            output_dir: Directory for intermediate files and config output
+            bom_path: Optional path to Onshape BOM CSV export
+            density: Default material density in kg/m³ (used when no BOM)
+
+        Returns:
+            InertiaReport with results and warnings
+        """
+        from onshape2xacro.inertia import (
+            InertiaCalculator,
+            InertiaConfigWriter,
+            BOMParser,
+            InertiaReport,
+        )
+
+        calc = InertiaCalculator(default_density=density)
+        writer = InertiaConfigWriter()
+        report = InertiaReport()
+
+        # Parse BOM if provided
+        bom_entries = {}
+        if bom_path and bom_path.exists():
+            parser = BOMParser()
+            bom_entries = parser.parse(bom_path)
+            logger.info(f"Loaded {len(bom_entries)} entries from BOM")
+
+        # Create links directory for intermediate STEP files
+        links_dir = output_dir / "links"
+        links_dir.mkdir(parents=True, exist_ok=True)
+
+        for link_name, link_data in link_records.items():
+            compound = link_data.get("compound")
+            if compound is None:
+                report.add_warning(link_name, link_name, "No geometry found for link")
+                continue
+
+            # Export link compound to STEP file
+            temp_step = links_dir / f"{link_name}.step"
+            try:
+                step_writer = STEPControl_Writer()
+                step_writer.Transfer(compound, STEPControl_AsIs)
+                status = step_writer.Write(str(temp_step))
+                if status != 1:
+                    report.add_warning(
+                        link_name, link_name, "Failed to write STEP file"
+                    )
+                    continue
+            except Exception as e:
+                report.add_warning(link_name, link_name, f"Error exporting STEP: {e}")
+                continue
+
+            # Compute inertia
+            try:
+                if bom_entries:
+                    props = calc.compute_from_step_with_bom(
+                        temp_step, bom_entries, link_name, report
+                    )
+                else:
+                    props = calc.compute_from_step(temp_step, material="default")
+
+                report.link_properties[link_name] = props
+                logger.info(
+                    f"Computed inertia for {link_name}: mass={props.mass:.4f} kg"
+                )
+            except Exception as e:
+                report.add_warning(
+                    link_name, link_name, f"Failed to compute inertia: {e}"
+                )
+
+        # Write config YAML
+        if report.link_properties:
+            config_dir = output_dir / "config"
+            writer.write(report.link_properties, config_dir)
+            logger.info(f"Wrote inertials.yaml to {config_dir}")
+
+        # Print warning summary
+        report.print_summary()
+
+        return report

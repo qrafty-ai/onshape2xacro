@@ -1,0 +1,5 @@
+Item,Quantity,Part number,Description,Material,Mass,Name
+1,1,,,- None -,0.3 kg,part_with_mass
+2,1,,,ppa-cf,No value,part_with_material
+3,1,,,- None -,No value,part_without_either
+4,1,,,aluminum,,part_empty_mass

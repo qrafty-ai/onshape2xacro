@@ -15,6 +15,7 @@ dependencies = [
     "trimesh>=4.11.1",
     "scipy>=1.17.0",
     "pymeshlab>=2025.7",
+    "cadquery>=2.6.1",
 ]
 
 [project.scripts]
