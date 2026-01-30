@@ -44,6 +44,24 @@ def _get_shape_tool(doc: Any):
     return XCAFDoc_DocumentTool.ShapeTool(doc.Main())
 
 
+def _decode_step_name(s: str) -> str:
+    """Decode STEP ISO-10303-21 Annex B Unicode sequences (\\X2\\HHHH\\X0\\)."""
+    if not s or "\\X2\\" not in s:
+        return s
+
+    def replace_match(match):
+        hex_str = match.group(1)
+        res = ""
+        try:
+            for i in range(0, len(hex_str), 4):
+                res += chr(int(hex_str[i : i + 4], 16))
+        except (ValueError, IndexError):
+            return match.group(0)
+        return res
+
+    return re.sub(r"\\X2\\([0-9A-F]+)\\X0\\", replace_match, s)
+
+
 def _label_name(label: Any) -> str:
     def _name_id():
         get_id = getattr(TDataStd_Name, "GetID_s", None)
@@ -63,7 +81,23 @@ def _label_name(label: Any) -> str:
 
     name_attr = TDataStd_Name()
     if label.FindAttribute(name_id, name_attr):
-        return name_attr.Get().ToExtString()
+        ext_str = name_attr.Get()
+        try:
+            name = ""
+            for i in range(1, ext_str.Length() + 1):
+                name += ext_str.Value(i)
+        except Exception:
+            name = ext_str.ToExtString()
+
+        if "\\X2\\" in name:
+            return _decode_step_name(name)
+
+        if all(ord(c) < 256 for c in name):
+            try:
+                return bytes([ord(c) for c in name]).decode("utf-8")
+            except (UnicodeDecodeError, ValueError):
+                pass
+        return name
     return ""
 
 
@@ -141,16 +175,21 @@ def _map_keys_to_export_names(cad: Any) -> Dict[Any, str]:
     groups: Dict[str, List[Tuple[int, Any]]] = {}
     for key in cad.parts:
         instance = cad.instances.get(key)
-        if not instance:
-            continue
-        name = instance.name
-        match = INSTANCE_SUFFIX_REGEX.match(name)
-        if match:
-            base = match.group("base")
-            index = int(match.group("index"))
+        if instance:
+            name = instance.name
+            match = INSTANCE_SUFFIX_REGEX.match(name)
+            if match:
+                base = match.group("base")
+                index = int(match.group("index"))
+            else:
+                base = name
+                index = 0
         else:
-            base = name
+            # Fallback for parts without instance info
+            part = cad.parts[key]
+            base = getattr(part, "name", str(key))
             index = 0
+
         if base not in groups:
             groups[base] = []
         groups[base].append((index, key))
@@ -509,6 +548,26 @@ def split_step_to_meshes(
     return mesh_map
 
 
+def _normalize_for_match(s: str) -> str:
+    if not s:
+        return ""
+    s = s.replace("_", "").replace("-", "").replace(" ", "")
+    s = s.replace("[", "").replace("]", "").replace("(", "").replace(")", "")
+    s = re.sub(r"[^\w\?]", "", s).lower()
+    return s
+
+
+def _wildcard_match(pattern: str, target: str) -> bool:
+    if not pattern or not target:
+        return False
+
+    p = re.escape(pattern).replace(r"\?", ".")
+    try:
+        return re.search(p, target, re.IGNORECASE) is not None
+    except re.error:
+        return False
+
+
 class StepMeshExporter:
     def __init__(
         self,
@@ -647,9 +706,9 @@ class StepMeshExporter:
         link_records: Dict[str, Any],
         mesh_dir: Path,
         bom_path: Optional[Path] = None,
-    ) -> Tuple[
-        Dict[str, str | Dict[str, str]],
-        Dict[str, List[Dict[str, str]]],
+    ) -> tuple[
+        dict[str, str | dict[str, str]],
+        dict[str, list[dict[str, str]]],
         Optional["InertiaReport"],
     ]:
         """Export link meshes from STEP files.
@@ -668,14 +727,540 @@ class StepMeshExporter:
 
         mesh_dir.mkdir(parents=True, exist_ok=True)
 
-        report = None
-        calc = None
+        report = InertiaReport()
+        calc = InertiaCalculator()
         bom_entries = {}
 
         if bom_path:
             bom_path = Path(bom_path) if isinstance(bom_path, str) else bom_path
-            report = InertiaReport()
-            calc = InertiaCalculator()
+            if bom_path.exists():
+                parser = BOMParser()
+                bom_entries = parser.parse(bom_path)
+                logger.info(f"Loaded {len(bom_entries)} entries from BOM")
+            else:
+                logger.warning(f"BOM file not found: {bom_path}")
+
+        if self.asset_path and self.asset_path.exists():
+            asset_path = self.asset_path
+        else:
+            asset_path = mesh_dir / "assembly.step"
+            self.export_step(asset_path)
+
+        if asset_path.suffix.lower() != ".zip":
+            header = _read_file_header(asset_path)
+            if not _is_step_payload(header) and not zipfile.is_zipfile(asset_path):
+                if self.client is None:
+                    raise RuntimeError(
+                        f"Invalid STEP file: {asset_path} (re-export requires client)"
+                    )
+                self.export_step(asset_path)
+
+        if asset_path.suffix.lower() == ".zip" or zipfile.is_zipfile(asset_path):
+            shapes_by_name = _load_step_shapes_from_zip(asset_path)
+            export_name_by_key = _map_keys_to_export_names(self.cad, link_records)
+
+            mesh_map: Dict[str, str | Dict[str, str]] = {}
+            missing_meshes: Dict[str, List[Dict[str, str]]] = {}
+            for link_name, link in link_records.items():
+                keys = link.keys
+                if not keys:
+                    continue
+
+                compound = TopoDS_Compound()
+                builder = BRep_Builder()
+                builder.MakeCompound(compound)
+                has_valid_shapes = False
+                link_missing_parts = []
+
+                for key in keys:
+                    part = self.cad.parts.get(key)
+                    if part is None or getattr(part, "isRigidAssembly", False):
+                        continue
+
+                    export_name = export_name_by_key.get(key)
+
+                    # Robust key lookup fallback (if object identity fails)
+                    if not export_name:
+                        key_path = getattr(key, "path", None)
+                        if key_path:
+                            for k, val in export_name_by_key.items():
+                                if getattr(k, "path", None) == key_path:
+                                    export_name = val
+                                    break
+
+                    shape = shapes_by_name.get(export_name) if export_name else None
+                    if shape:
+                        builder.Add(compound, shape)
+                        has_valid_shapes = True
+                    else:
+                        link_missing_parts.append(
+                            {
+                                "part_id": getattr(part, "partId", str(key)),
+                                "export_name": export_name or "N/A",
+                                "part_name": getattr(part, "name", "unknown"),
+                                "reason": f"Part not found in ZIP (export_name={export_name})",
+                            }
+                        )
+
+                if link_missing_parts:
+                    missing_meshes[link_name] = link_missing_parts
+
+                if has_valid_shapes:
+                    BRepMesh_IncrementalMesh(compound, self.deflection)
+                    final_stl = mesh_dir / f"{link_name}.stl"
+                    stl_writer = StlAPI_Writer()
+                    stl_writer.Write(compound, str(final_stl))
+                    mesh_map[link_name] = final_stl.name
+
+            return mesh_map, missing_meshes, report
+
+        # Primary logic for single STEP file
+        doc = TDocStd_Document(TCollection_ExtendedString("step"))
+        reader = STEPCAFControl_Reader()
+        reader.SetNameMode(True)
+        reader.SetPropsMode(True)
+        reader.SetColorMode(True)
+        reader.SetLayerMode(True)
+        if hasattr(reader, "SetMatMode"):
+            reader.SetMatMode(True)
+        if hasattr(reader, "SetViewMode"):
+            reader.SetViewMode(True)
+        if hasattr(reader, "SetGDTMode"):
+            reader.SetGDTMode(True)
+        if hasattr(reader, "SetSHUOMode"):
+            reader.SetSHUOMode(True)
+        status = reader.ReadFile(str(asset_path))
+        if status != IFSelect_RetDone:
+            raise RuntimeError(f"STEP read failed with status {status}: {asset_path}")
+
+        if not reader.Transfer(doc):
+            raise RuntimeError("STEP transfer failed")
+        shape_tool = _get_shape_tool(doc)
+        labels = _get_free_shape_labels(shape_tool)
+
+        part_shapes: Dict[Any, Any] = {}
+        part_locations: Dict[Any, TopLoc_Location] = {}
+        for i in range(labels.Length()):
+            _collect_shapes(
+                shape_tool,
+                labels.Value(i + 1),
+                TopLoc_Location(),
+                part_shapes,
+                part_locations,
+            )
+
+        has_occurrence_ids = any(
+            isinstance(key, tuple) and len(key) > 0 for key in part_shapes.keys()
+        )
+        has_any_ids = any(
+            (isinstance(key, tuple) and len(key) > 0)
+            or (isinstance(key, str) and bool(key))
+            for key in part_shapes.keys()
+        )
+
+        part_id_counts: Dict[str, int] = {}
+        for part in self.cad.parts.values():
+            part_id = getattr(part, "partId", None)
+            if part_id is None:
+                continue
+            part_id_counts[part_id] = part_id_counts.get(part_id, 0) + 1
+        has_duplicate_part_ids = any(count > 1 for count in part_id_counts.values())
+
+        needs_reexport = (not has_any_ids) or (
+            not has_occurrence_ids and has_duplicate_part_ids
+        )
+
+        if needs_reexport:
+            # Re-export to ensure export IDs are embedded
+            asset_path = mesh_dir / "assembly.step"
+            try:
+                self.export_step(asset_path)
+            except Exception as exc:
+                if self.client is None:
+                    raise RuntimeError(
+                        "STEP file missing occurrence export IDs and no client available to re-export."
+                    ) from exc
+                raise
+
+            doc = TDocStd_Document(TCollection_ExtendedString("step"))
+            reader = STEPCAFControl_Reader()
+            reader.SetNameMode(True)
+            reader.SetPropsMode(True)
+            reader.SetColorMode(True)
+            reader.SetLayerMode(True)
+            if hasattr(reader, "SetMatMode"):
+                reader.SetMatMode(True)
+            if hasattr(reader, "SetViewMode"):
+                reader.SetViewMode(True)
+            if hasattr(reader, "SetGDTMode"):
+                reader.SetGDTMode(True)
+            if hasattr(reader, "SetSHUOMode"):
+                reader.SetSHUOMode(True)
+
+            status = reader.ReadFile(str(asset_path))
+            if status != IFSelect_RetDone:
+                raise RuntimeError(
+                    f"STEP read failed with status {status}: {asset_path}"
+                )
+            if not reader.Transfer(doc):
+                raise RuntimeError("STEP transfer failed")
+            shape_tool = _get_shape_tool(doc)
+            labels = _get_free_shape_labels(shape_tool)
+            part_shapes.clear()
+            part_locations.clear()
+            for i in range(labels.Length()):
+                _collect_shapes(
+                    shape_tool,
+                    labels.Value(i + 1),
+                    TopLoc_Location(),
+                    part_shapes,
+                    part_locations,
+                )
+            has_occurrence_ids = any(
+                isinstance(key, tuple) and len(key) > 0 for key in part_shapes.keys()
+            )
+
+        stl_writer = StlAPI_Writer()
+        mesh_map: Dict[str, str | Dict[str, str]] = {}
+        missing_meshes: Dict[str, List[Dict[str, str]]] = {}
+        used_indices: Dict[Any, int] = {}
+
+        occ_path_to_name: Dict[Tuple[str, ...], str] = {}
+        for occ_key, occ in self.cad.occurrences.items():
+            occ_path = getattr(occ, "path", None)
+            if not occ_path:
+                continue
+            occ_path_to_name[tuple(occ_path)] = str(occ_key)
+
+        def _instance_leaf_name(key: Any) -> str | None:
+            inst = self.cad.instances.get(key)
+            if inst is None:
+                return None
+            name = getattr(inst, "name", None)
+            if not name:
+                return None
+            return re.sub(r"\s*<\d+>$", "", name)
+
+        def _name_path_for_key(key: Any) -> Tuple[str, ...] | None:
+            path = getattr(key, "path", None)
+            if not path:
+                return None
+            names: List[str] = []
+            for i in range(1, len(path) + 1):
+                prefix = tuple(path[:i])
+                name = occ_path_to_name.get(prefix)
+                if not name:
+                    return None
+                names.append(name)
+            return tuple(names) if names else None
+
+        def _normalized_leaf_name(name_path: Tuple[str, ...] | None) -> str | None:
+            if not name_path:
+                return None
+            leaf = name_path[-1]
+            leaf = re.sub(r"_\d+$", "", leaf)
+            if len(name_path) >= 2:
+                parent = re.sub(r"_\d+$", "", name_path[-2])
+                prefix = f"{parent}_"
+                if leaf.startswith(prefix):
+                    leaf = leaf[len(prefix) :]
+            return leaf
+
+        for link_name, link in link_records.items():
+            keys = link.keys
+            if not keys:
+                continue
+
+            link_matrix = getattr(link, "frame_transform", None)
+            if link_matrix is not None:
+                link_matrix = link_matrix.copy()
+                link_matrix[:3, 3] *= 1000.0
+                link_loc = TopLoc_Location(_matrix_to_trsf(link_matrix))
+            else:
+                link_loc = None
+                for key in keys:
+                    part = self.cad.parts.get(key)
+                    if part is None or getattr(part, "isRigidAssembly", False):
+                        continue
+                    part_path = getattr(key, "path", None)
+                    if part_path:
+                        part_path = tuple(part_path)
+                    if part_path in part_locations:
+                        link_loc = part_locations[part_path][0]
+                        break
+                    inst_name = _instance_leaf_name(key)
+                    if inst_name in part_locations:
+                        link_loc = part_locations[inst_name][0]
+                        break
+                    name_path = _name_path_for_key(key)
+                    if name_path in part_locations:
+                        link_loc = part_locations[name_path][0]
+                        break
+                    leaf_name = _normalized_leaf_name(name_path)
+                    if leaf_name in part_locations:
+                        link_loc = part_locations[leaf_name][0]
+                        break
+                    part_id = getattr(part, "partId", str(key))
+                    if part_id in part_locations:
+                        link_loc = part_locations[part_id][0]
+                        break
+                if link_loc is None:
+                    link_loc = TopLoc_Location()
+
+            compound = TopoDS_Compound()
+            builder = BRep_Builder()
+            builder.MakeCompound(compound)
+            link_missing_parts: List[Dict[str, str]] = []
+            has_valid_shapes = False
+            part_metadata_list: List[Dict[str, str]] = []
+            part_names_list = getattr(link, "part_names", [])
+
+            for idx, key in enumerate(keys):
+                part = self.cad.parts.get(key)
+                if part is None or getattr(part, "isRigidAssembly", False):
+                    continue
+
+                part_name_full = (
+                    part_names_list[idx]
+                    if idx < len(part_names_list)
+                    else getattr(part, "name", str(key))
+                )
+
+                def _pick_match(match_key: Any):
+                    shapes = part_shapes.get(match_key)
+                    locs = part_locations.get(match_key)
+                    if shapes and locs:
+                        idx_match = used_indices.get(match_key, 0)
+                        if idx_match < len(shapes):
+                            used_indices[match_key] = idx_match + 1
+                            return shapes[idx_match], locs[idx_match], match_key
+                        logger.warning(
+                            f"Cloning last available STEP shape for key {match_key} "
+                            f"(request {idx_match + 1} > available {len(shapes)})"
+                        )
+                        used_indices[match_key] = idx_match + 1
+                        return shapes[-1], locs[-1], match_key
+                    return None, None, None
+
+                part_path = getattr(key, "path", None)
+                if part_path:
+                    part_path = tuple(part_path)
+                shape, part_loc, match_info = _pick_match(part_path)
+                name_path = None
+
+                if shape is None or part_loc is None:
+                    inst_name = _instance_leaf_name(key)
+                    shape, part_loc, match_info = _pick_match(inst_name)
+                if shape is None or part_loc is None:
+                    name_path = _name_path_for_key(key)
+                    shape, part_loc, match_info = _pick_match(name_path)
+                if shape is None or part_loc is None:
+                    leaf_name = _normalized_leaf_name(name_path)
+                    shape, part_loc, match_info = _pick_match(leaf_name)
+                if (shape is None or part_loc is None) and name_path:
+                    shape, part_loc, match_info = _pick_match(name_path[-1])
+                if shape is None or part_loc is None:
+                    shape, part_loc, match_info = _pick_match(part_name_full)
+                if shape is None or part_loc is None:
+                    part_id = getattr(part, "partId", str(key))
+                    shape, part_loc, match_info = _pick_match(part_id)
+
+                if shape is None or part_loc is None:
+                    part_name_norm = _normalize_for_match(part_name_full)
+                    name_path_norm = _normalize_for_match(
+                        "".join(_name_path_for_key(key) or [])
+                    )
+                    if part_name_norm or name_path_norm:
+                        for label_key in part_shapes.keys():
+                            if not isinstance(label_key, str):
+                                continue
+                            label_norm = _normalize_for_match(label_key)
+                            if not label_norm or "?" not in label_norm:
+                                continue
+                            if _wildcard_match(
+                                label_norm, part_name_norm
+                            ) or _wildcard_match(label_norm, name_path_norm):
+                                shape, part_loc, match_info = _pick_match(label_key)
+                                if shape:
+                                    logger.info(
+                                        f"Wildcard matched {label_key} to {part_name_full}"
+                                    )
+                                    break
+
+                        if shape is None:
+                            for label_key in part_shapes.keys():
+                                if not isinstance(label_key, str):
+                                    continue
+                                label_norm = _normalize_for_match(label_key)
+                                if label_norm and (
+                                    label_norm == part_name_norm
+                                    or label_norm == name_path_norm
+                                ):
+                                    shape, part_loc, match_info = _pick_match(label_key)
+                                    if shape:
+                                        break
+
+                        if shape is None:
+                            for label_key in part_shapes.keys():
+                                if not isinstance(label_key, str):
+                                    continue
+                                label_norm = _normalize_for_match(label_key)
+                                if not label_norm or len(label_norm) < 4:
+                                    continue
+                                is_match = (
+                                    (part_name_norm and label_norm in part_name_norm)
+                                    or (part_name_norm and part_name_norm in label_norm)
+                                    or (name_path_norm and label_norm in name_path_norm)
+                                    or (name_path_norm and name_path_norm in label_norm)
+                                )
+                                if is_match:
+                                    logger.info(
+                                        f"Fuzzy matched {label_key} to {part_name_full}"
+                                    )
+                                    shape, part_loc, match_info = _pick_match(label_key)
+                                    if shape:
+                                        break
+
+                if shape is None or part_loc is None:
+                    link_missing_parts.append(
+                        {
+                            "part_id": getattr(part, "partId", str(key)),
+                            "export_name": "N/A",
+                            "part_name": getattr(part, "name", "unknown"),
+                            "reason": (
+                                "Part not found in STEP (path="
+                                f"{getattr(key, 'path', 'N/A')}, "
+                                f"name_path={_name_path_for_key(key)})"
+                            ),
+                        }
+                    )
+                    continue
+
+                rel_loc = _relative_location(part_loc, link_loc)
+                builder.Add(compound, shape.Located(rel_loc))
+                has_valid_shapes = True
+                part_metadata_list.append(
+                    {
+                        "part_id": getattr(part, "partId", str(key)),
+                        "part_name": part_name_full,
+                        "mesh_match": str(match_info) if match_info else "N/A",
+                    }
+                )
+
+            if link_missing_parts:
+                missing_meshes[link_name] = link_missing_parts
+
+            if has_valid_shapes:
+                BRepMesh_IncrementalMesh(compound, self.deflection)
+                temp_stl = mesh_dir / f"{link_name}_raw.stl"
+                stl_writer.Write(compound, str(temp_stl))
+
+                if report is not None and calc is not None:
+                    try:
+                        temp_step_inertia = mesh_dir / f"{link_name}_inertia.step"
+                        step_writer = STEPControl_Writer()
+                        step_writer.Transfer(compound, STEPControl_AsIs)
+                        step_writer.Write(str(temp_step_inertia))
+                        props = calc.compute_from_step_with_bom(
+                            temp_step_inertia,
+                            bom_entries,
+                            link_name,
+                            report,
+                            part_metadata=part_metadata_list,
+                        )
+                        if props:
+                            report.link_properties[link_name] = props
+                            logger.info(
+                                f"Computed inertia for {link_name}: mass={props.mass:.4f} kg"
+                            )
+                        if temp_step_inertia.exists():
+                            temp_step_inertia.unlink()
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to compute inertia for {link_name}: {e}"
+                        )
+
+                try:
+                    mesh = trimesh.load(str(temp_stl), force="mesh")
+                    vis_filename = f"{link_name}.glb"
+                    vis_path = mesh_dir / vis_filename
+                    mesh.export(vis_path)
+                    col_filename = f"{link_name}_collision.stl"
+                    col_path = mesh_dir / col_filename
+                    try:
+                        ms = pymeshlab.MeshSet()
+                        ms.load_new_mesh(str(temp_stl))
+                        ms.generate_convex_hull()
+                        if ms.current_mesh().face_number() > 200:
+                            ms.meshing_decimation_quadric_edge_collapse(
+                                targetfacenum=200
+                            )
+                        ms.save_current_mesh(str(col_path))
+                    except Exception:
+                        import shutil
+
+                        shutil.copy(temp_stl, col_path)
+                    mesh_map[link_name] = {
+                        "visual": vis_filename,
+                        "collision": col_filename,
+                    }
+                    temp_stl.unlink()
+                except Exception as e:
+                    print(f"Error processing mesh for {link_name}: {e}")
+                    final_stl = mesh_dir / f"{link_name}.stl"
+                    if temp_stl.exists():
+                        temp_stl.rename(final_stl)
+                    mesh_map[link_name] = final_stl.name
+
+        return mesh_map, missing_meshes, report
+
+        # Primary logic for single STEP file
+        doc = TDocStd_Document(TCollection_ExtendedString("step"))
+        reader = STEPCAFControl_Reader()
+        reader.SetNameMode(True)
+        reader.SetPropsMode(True)
+        reader.SetColorMode(True)
+        reader.SetLayerMode(True)
+        if hasattr(reader, "SetMatMode"):
+            reader.SetMatMode(True)
+        if hasattr(reader, "SetViewMode"):
+            reader.SetViewMode(True)
+        if hasattr(reader, "SetGDTMode"):
+            reader.SetGDTMode(True)
+        if hasattr(reader, "SetSHUOMode"):
+            reader.SetSHUOMode(True)
+        status = reader.ReadFile(str(asset_path))
+        if status != IFSelect_RetDone:
+            raise RuntimeError(f"STEP read failed with status {status}: {asset_path}")
+
+        if not reader.Transfer(doc):
+            raise RuntimeError("STEP transfer failed")
+        shape_tool = _get_shape_tool(doc)
+        labels = _get_free_shape_labels(shape_tool)
+
+        part_shapes: Dict[Any, Any] = {}
+        part_locations: Dict[Any, TopLoc_Location] = {}
+        for i in range(labels.Length()):
+            _collect_shapes(
+                shape_tool,
+                labels.Value(i + 1),
+                TopLoc_Location(),
+                part_shapes,
+                part_locations,
+            )
+
+        has_occurrence_ids = any(
+            isinstance(key, tuple) and len(key) > 0 for key in part_shapes.keys()
+        )
+
+        mesh_dir.mkdir(parents=True, exist_ok=True)
+
+        report = InertiaReport()
+        calc = InertiaCalculator()
+        bom_entries = {}
+
+        if bom_path:
+            bom_path = Path(bom_path) if isinstance(bom_path, str) else bom_path
             if bom_path.exists():
                 parser = BOMParser()
                 bom_entries = parser.parse(bom_path)
@@ -738,12 +1323,188 @@ class StepMeshExporter:
 
                 part_names_list = getattr(link, "part_names", [])
 
-                for idx, key in enumerate(keys):
-                    part = self.cad.parts.get(key)
-                    if part is None or getattr(part, "isRigidAssembly", False):
-                        continue
+            for idx, key in enumerate(keys):
+                part = self.cad.parts.get(key)
+                if part is None or getattr(part, "isRigidAssembly", False):
+                    continue
 
-                    export_name = export_name_by_key.get(key)
+                part_name_full = (
+                    part_names_list[idx]
+                    if idx < len(part_names_list)
+                    else getattr(part, "name", str(key))
+                )
+
+                # Helper to pick shape and location from lists based on used indices
+                def _pick_match(match_key: Any):
+                    shapes = part_shapes.get(match_key)
+                    locs = part_locations.get(match_key)
+                    if shapes and locs:
+                        idx_match = used_indices.get(match_key, 0)
+
+                        if idx_match < len(shapes):
+                            used_indices[match_key] = idx_match + 1
+                            return shapes[idx_match], locs[idx_match], match_key
+
+                        logger.warning(
+                            f"Cloning last available STEP shape for key {match_key} "
+                            f"(request {idx_match + 1} > available {len(shapes)})"
+                        )
+                        used_indices[match_key] = idx_match + 1
+
+                        return shapes[-1], locs[-1], match_key
+
+                    return None, None, None
+
+                # 1. Primary match: Occurrence Path (Tuple of IDs)
+                part_path = getattr(key, "path", None)
+                if part_path:
+                    part_path = tuple(part_path)
+                shape, part_loc, match_info = _pick_match(part_path)
+                name_path = None
+
+                if shape is None or part_loc is None:
+                    inst_name = _instance_leaf_name(key)
+                    shape, part_loc, match_info = _pick_match(inst_name)
+
+                if shape is None or part_loc is None:
+                    name_path = _name_path_for_key(key)
+                    shape, part_loc, match_info = _pick_match(name_path)
+
+                if shape is None or part_loc is None:
+                    leaf_name = _normalized_leaf_name(name_path)
+                    shape, part_loc, match_info = _pick_match(leaf_name)
+
+                if (shape is None or part_loc is None) and name_path:
+                    # Try raw leaf name (without normalization)
+                    shape, part_loc, match_info = _pick_match(name_path[-1])
+
+                if shape is None or part_loc is None:
+                    # 2. Secondary match: Part Name (from metadata)
+                    shape, part_loc, match_info = _pick_match(part_name_full)
+
+                if shape is None or part_loc is None:
+                    # 3. Tertiary match: Part Studio ID (String)
+                    part_id = getattr(part, "partId", str(key))
+                    shape, part_loc, match_info = _pick_match(part_id)
+
+                if shape is None or part_loc is None:
+                    part_name_norm = _normalize_for_match(part_name_full)
+                    name_path_norm = _normalize_for_match(
+                        "".join(_name_path_for_key(key))
+                    )
+                    if part_name_norm or name_path_norm:
+                        for label_key in part_shapes.keys():
+                            if not isinstance(label_key, str):
+                                continue
+                            label_norm = _normalize_for_match(label_key)
+                            if not label_norm or "?" not in label_norm:
+                                continue
+
+                            if _wildcard_match(
+                                label_norm, part_name_norm
+                            ) or _wildcard_match(label_norm, name_path_norm):
+                                shape, part_loc, match_info = _pick_match(label_key)
+                                if shape:
+                                    logger.info(
+                                        f"Wildcard matched {label_key} to {part_name_full}"
+                                    )
+                                    break
+
+                        if shape is None:
+                            for label_key in part_shapes.keys():
+                                if not isinstance(label_key, str):
+                                    continue
+                                label_norm = _normalize_for_match(label_key)
+                                if label_norm and (
+                                    label_norm == part_name_norm
+                                    or label_norm == name_path_norm
+                                ):
+                                    shape, part_loc, match_info = _pick_match(label_key)
+                                    if shape:
+                                        break
+
+                        if shape is None:
+                            for label_key in part_shapes.keys():
+                                if not isinstance(label_key, str):
+                                    continue
+                                label_norm = _normalize_for_match(label_key)
+                                if not label_norm or len(label_norm) < 4:
+                                    continue
+
+                                is_match = (
+                                    (part_name_norm and label_norm in part_name_norm)
+                                    or (part_name_norm and part_name_norm in label_norm)
+                                    or (name_path_norm and label_norm in name_path_norm)
+                                    or (name_path_norm and name_path_norm in label_norm)
+                                )
+
+                                if is_match:
+                                    logger.info(
+                                        f"Fuzzy matched {label_key} to {part_name_full}"
+                                    )
+                                    shape, part_loc, match_info = _pick_match(label_key)
+                                    if shape:
+                                        break
+
+                        # 2. Try exact normalized match
+                        if shape is None:
+                            for label_key in part_shapes.keys():
+                                if not isinstance(label_key, str):
+                                    continue
+                                label_norm = _normalize_for_match(label_key)
+                                if label_norm and (
+                                    label_norm == part_name_norm
+                                    or label_norm == name_path_norm
+                                ):
+                                    shape, part_loc, match_info = _pick_match(label_key)
+                                    if shape:
+                                        break
+
+                        # 3. Substring match (more restrictive)
+                        if shape is None:
+                            for label_key in part_shapes.keys():
+                                if not isinstance(label_key, str):
+                                    continue
+                                label_norm = _normalize_for_match(label_key)
+                                if not label_norm or len(label_norm) < 4:
+                                    continue
+
+                                is_match = (
+                                    (part_name_norm and label_norm in part_name_norm)
+                                    or (part_name_norm and part_name_norm in label_norm)
+                                    or (name_path_norm and label_norm in name_path_norm)
+                                    or (name_path_norm and name_path_norm in label_norm)
+                                )
+
+                                if is_match:
+                                    logger.info(
+                                        f"Fuzzy matched {label_key} to {part_name_full}"
+                                    )
+                                    shape, part_loc, match_info = _pick_match(label_key)
+                                    if shape:
+                                        break
+
+                        if shape is None:
+                            for label_key in part_shapes.keys():
+                                if not isinstance(label_key, str):
+                                    continue
+                                label_norm = _normalize_for_match(label_key)
+                                if not label_norm or len(label_norm) < 4:
+                                    continue
+
+                                if (
+                                    (part_name_norm and label_norm in part_name_norm)
+                                    or (part_name_norm and part_name_norm in label_norm)
+                                    or (name_path_norm and label_norm in name_path_norm)
+                                    or (name_path_norm and name_path_norm in label_norm)
+                                ):
+                                    logger.info(
+                                        f"Fuzzy matched {label_key} to {part_name_full}"
+                                    )
+                                    shape, part_loc, match_info = _pick_match(label_key)
+                                    if shape:
+                                        break
+
                     shape = shapes_by_name.get(export_name) if export_name else None
 
                     if shape is None:
@@ -1008,6 +1769,7 @@ class StepMeshExporter:
         stl_writer = StlAPI_Writer()
         mesh_map: Dict[str, str | Dict[str, str]] = {}
         missing_meshes: Dict[str, List[Dict[str, str]]] = {}
+        used_indices: Dict[Any, int] = {}
 
         occ_path_to_name: Dict[Tuple[str, ...], str] = {}
         for occ_key, occ in self.cad.occurrences.items():
@@ -1054,8 +1816,6 @@ class StepMeshExporter:
             keys = link.keys
             if not keys:
                 continue
-
-            used_indices: Dict[Any, int] = {}
 
             # Link frame transform (World to Link)
             link_matrix = getattr(link, "frame_transform", None)
@@ -1124,36 +1884,113 @@ class StepMeshExporter:
                     locs = part_locations.get(match_key)
                     if shapes and locs:
                         idx = used_indices.get(match_key, 0)
-                        # If we have multiple occurrences, distribute them 1-to-1
-                        # If we run out, reuse the last one (better than missing)
-                        shape_idx = min(idx, len(shapes) - 1)
+
+                        if idx < len(shapes):
+                            used_indices[match_key] = idx + 1
+                            return shapes[idx], locs[idx], match_key
+
+                        logger.warning(
+                            f"Cloning last available STEP shape for key {match_key} "
+                            f"(request {idx + 1} > available {len(shapes)})"
+                        )
                         used_indices[match_key] = idx + 1
-                        return shapes[shape_idx], locs[shape_idx]
-                    return None, None
+
+                        return shapes[-1], locs[-1], match_key
+
+                    return None, None, None
 
                 # 1. Primary match: Occurrence Path (Tuple of IDs)
                 part_path = getattr(key, "path", None)
                 if part_path:
                     part_path = tuple(part_path)
-                shape, part_loc = _pick_match(part_path)
+                shape, part_loc, match_info = _pick_match(part_path)
                 name_path = None
 
                 if shape is None or part_loc is None:
                     inst_name = _instance_leaf_name(key)
-                    shape, part_loc = _pick_match(inst_name)
+                    shape, part_loc, match_info = _pick_match(inst_name)
 
                 if shape is None or part_loc is None:
                     name_path = _name_path_for_key(key)
-                    shape, part_loc = _pick_match(name_path)
+                    shape, part_loc, match_info = _pick_match(name_path)
 
                 if shape is None or part_loc is None:
                     leaf_name = _normalized_leaf_name(name_path)
-                    shape, part_loc = _pick_match(leaf_name)
+                    shape, part_loc, match_info = _pick_match(leaf_name)
+
+                if (shape is None or part_loc is None) and name_path:
+                    # Try raw leaf name (without normalization)
+                    shape, part_loc, match_info = _pick_match(name_path[-1])
 
                 if shape is None or part_loc is None:
-                    # 2. Secondary match: Part Studio ID (String)
+                    # 2. Secondary match: Part Name (from metadata)
+                    part_name_meta = getattr(part, "name", None)
+                    shape, part_loc, match_info = _pick_match(part_name_meta)
+
+                if shape is None or part_loc is None:
+                    # 3. Tertiary match: Part Studio ID (String)
                     part_id = getattr(part, "partId", str(key))
-                    shape, part_loc = _pick_match(part_id)
+                    shape, part_loc, match_info = _pick_match(part_id)
+
+                if shape is None or part_loc is None:
+                    part_name_norm = _normalize_for_match(getattr(part, "name", ""))
+                    name_path_norm = _normalize_for_match(
+                        "".join(_name_path_for_key(key))
+                    )
+                    if part_name_norm or name_path_norm:
+                        for label_key in part_shapes.keys():
+                            if not isinstance(label_key, str):
+                                continue
+                            label_norm = _normalize_for_match(label_key)
+                            if label_norm and (
+                                label_norm == part_name_norm
+                                or label_norm == name_path_norm
+                            ):
+                                shape, part_loc, match_info = _pick_match(label_key)
+                                if shape:
+                                    break
+
+                        if shape is None:
+                            for label_key in part_shapes.keys():
+                                if not isinstance(label_key, str):
+                                    continue
+                                label_norm = _normalize_for_match(label_key)
+                                if not label_norm or len(label_norm) < 4:
+                                    continue
+
+                                is_match = False
+                                if "?" in label_norm:
+                                    is_match = _wildcard_match(
+                                        label_norm, part_name_norm
+                                    ) or _wildcard_match(label_norm, name_path_norm)
+
+                                if not is_match:
+                                    is_match = (
+                                        (
+                                            part_name_norm
+                                            and label_norm in part_name_norm
+                                        )
+                                        or (
+                                            part_name_norm
+                                            and part_name_norm in label_norm
+                                        )
+                                        or (
+                                            name_path_norm
+                                            and label_norm in name_path_norm
+                                        )
+                                        or (
+                                            name_path_norm
+                                            and name_path_norm in label_norm
+                                        )
+                                    )
+
+                                if is_match:
+                                    logger.info(
+                                        f"Fuzzy matched {label_key} to {getattr(part, 'name', 'N/A')}"
+                                    )
+                                    shape, part_loc, match_info = _pick_match(label_key)
+                                    if shape:
+                                        break
 
                 if shape is None or part_loc is None:
                     link_missing_parts.append(
@@ -1181,6 +2018,7 @@ class StepMeshExporter:
                     {
                         "part_id": getattr(part, "partId", str(key)),
                         "part_name": part_name_from_list or str(key),
+                        "mesh_match": str(match_info) if match_info else "N/A",
                     }
                 )
 

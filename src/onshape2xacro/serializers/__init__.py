@@ -90,16 +90,9 @@ class XacroSerializer(RobotSerializer):
 
         if download_assets:
             # We need to manually invoke exporter logic here to support BOM/inertials
-            # Previously this called _export_meshes, but we need the new return values
             client = getattr(robot, "client", None)
             cad = getattr(robot, "cad", None)
             asset_path = getattr(robot, "asset_path", None)
-
-            if (client and cad) or (cad and asset_path):
-                exporter = StepMeshExporter(client, cad, asset_path=asset_path)
-                mesh_map, missing_meshes, report = exporter.export_link_meshes(
-                    link_records, mesh_dir_path, bom_path=bom_path
-                )
 
             if (client and cad) or (cad and asset_path):
                 exporter = StepMeshExporter(client, cad, asset_path=asset_path)
@@ -333,8 +326,8 @@ class XacroSerializer(RobotSerializer):
                 if stored_limits:
                     if isinstance(stored_limits, dict):
                         if "min" in stored_limits and "max" in stored_limits:
-                            default_limit["lower"] = -stored_limits["max"]
-                            default_limit["upper"] = -stored_limits["min"]
+                            default_limit["lower"] = stored_limits["min"]
+                            default_limit["upper"] = stored_limits["max"]
                         if "effort" in stored_limits:
                             default_limit["effort"] = stored_limits["effort"]
                         if "velocity" in stored_limits:
@@ -343,8 +336,8 @@ class XacroSerializer(RobotSerializer):
                         if hasattr(stored_limits, "min") and hasattr(
                             stored_limits, "max"
                         ):
-                            default_limit["lower"] = -stored_limits.max
-                            default_limit["upper"] = -stored_limits.min
+                            default_limit["lower"] = stored_limits.min
+                            default_limit["upper"] = stored_limits.max
                         if hasattr(stored_limits, "effort"):
                             default_limit["effort"] = stored_limits.effort
                         if hasattr(stored_limits, "velocity"):
@@ -513,7 +506,6 @@ class XacroSerializer(RobotSerializer):
 
         # Update joint limits and axis if it's a movable joint
         if jtype in ["revolute", "prismatic", "continuous"]:
-            # Default to -Z-axis rotation (negated to match robot toolkit convention)
             ET.SubElement(joint_el, "axis", xyz="0 0 -1")
 
         if jtype in ["revolute", "prismatic"]:
@@ -555,7 +547,10 @@ class XacroSerializer(RobotSerializer):
         if (client and cad) or (cad and asset_path):
             exporter = StepMeshExporter(client, cad, asset_path=asset_path)
             # Pass link records instead of just keys
-            return exporter.export_link_meshes(link_records, mesh_dir)
+            mesh_map, missing_meshes, _ = exporter.export_link_meshes(
+                link_records, mesh_dir
+            )
+            return mesh_map, missing_meshes
 
         return {}, {}
 
@@ -593,8 +588,8 @@ class XacroSerializer(RobotSerializer):
                 if stored_limits:
                     if isinstance(stored_limits, dict):
                         if "min" in stored_limits and "max" in stored_limits:
-                            default_limit["lower"] = -stored_limits["max"]
-                            default_limit["upper"] = -stored_limits["min"]
+                            default_limit["lower"] = stored_limits["min"]
+                            default_limit["upper"] = stored_limits["max"]
                         if "effort" in stored_limits:
                             default_limit["effort"] = stored_limits["effort"]
                         if "velocity" in stored_limits:
@@ -603,8 +598,8 @@ class XacroSerializer(RobotSerializer):
                         if hasattr(stored_limits, "min") and hasattr(
                             stored_limits, "max"
                         ):
-                            default_limit["lower"] = -stored_limits.max
-                            default_limit["upper"] = -stored_limits.min
+                            default_limit["lower"] = stored_limits.min
+                            default_limit["upper"] = stored_limits.max
                         if hasattr(stored_limits, "effort"):
                             default_limit["effort"] = stored_limits.effort
                         if hasattr(stored_limits, "velocity"):

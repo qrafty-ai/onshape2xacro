@@ -32,6 +32,7 @@ class PartDebugInfo:
     ixx: float = 0.0
     iyy: float = 0.0
     izz: float = 0.0
+    mesh_match: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
 
 
@@ -89,7 +90,7 @@ class InertiaReport:
         if not self.link_parts:
             return "No part debug information available."
 
-        lines = ["# Inertia Calculation Debug Report\n"]
+        lines = ["# Inertia and Mesh Calculation Debug Report\n"]
 
         for link_name in sorted(self.link_parts.keys()):
             parts = self.link_parts[link_name]
@@ -98,10 +99,10 @@ class InertiaReport:
             lines.append(f"## Link: {link_name}\n")
 
             lines.append(
-                "| Part | BOM Match | Mass Source | Material | Volume (cm³) | Mass (kg) | Ixx (kg·m²) | Iyy (kg·m²) | Izz (kg·m²) | Status |"
+                "| Part | BOM Match | Mass Source | Material | Volume (cm³) | Mass (kg) | Mesh Match | Status |"
             )
             lines.append(
-                "|------|-----------|-------------|----------|--------------|-----------|-------------|-------------|-------------|--------|"
+                "|------|-----------|-------------|----------|--------------|-----------|------------|--------|"
             )
 
             link_warnings = []
@@ -113,14 +114,15 @@ class InertiaReport:
 
                 bom_match = part.bom_match or "-"
                 if part.match_type == "fuzzy" and part.bom_match:
-                    bom_match = f"(fuzzy: {part.bom_match})"
+                    bom_match = f"(fuzzy: {bom_match})"
 
                 material = part.material or "-"
+                mesh_match = part.mesh_match or "MISSING"
 
                 lines.append(
                     f"| {part.part_id} | {bom_match} | {part.mass_source} | "
                     f"{material} | {part.volume_cm3:.2f} | {part.mass_kg:.4f} | "
-                    f"{part.ixx:.3e} | {part.iyy:.3e} | {part.izz:.3e} | {status} |"
+                    f"{mesh_match} | {status} |"
                 )
 
             total_mass = props.mass if props else sum(p.mass_kg for p in parts)
