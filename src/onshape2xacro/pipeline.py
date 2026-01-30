@@ -83,13 +83,25 @@ def run_export(config: ExportConfig):
         print(f"Loading pre-fetched CAD data from {url_path}...")
         with open(url_path / "cad.pickle", "rb") as f:
             cad = pickle.load(f)
-        client = _try_get_client()
+
+        # In pre-fetched mode, we stay local unless assembly.step is missing.
         if (url_path / "assembly.step").exists():
             asset_path = url_path / "assembly.step"
+            client = None
         elif (url_path / "assembly.zip").exists():
             asset_path = url_path / "assembly.zip"
+            client = None
         else:
             asset_path = None
+            client = _try_get_client()
+            if client:
+                print(
+                    "Warning: 'assembly.step' not found in local directory. Will attempt to download using API."
+                )
+            else:
+                print(
+                    "Warning: 'assembly.step' not found in local directory and no API credentials found."
+                )
         if bom_path is None and (url_path / "bom.csv").exists():
             bom_path = url_path / "bom.csv"
     else:
