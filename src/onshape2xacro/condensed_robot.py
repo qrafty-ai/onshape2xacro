@@ -344,9 +344,14 @@ class CondensedRobot(Robot):
                                     )
                                     break
                     if found:
-                        # Reset rotation to identity to keep base link aligned with world
-                        # This ensures the mesh is rotated correctly (Z-up) but placed at the part's origin
-                        root_link_frame[:3, :3] = np.eye(3)
+                        # Reset rotation to align with STEP coordinate system
+                        # STEP export appears to use X-up orientation for this assembly
+                        # while CAD API uses Z-up. We apply RotY(-90) to the Link Frame
+                        # so that the Mesh (relative to Link) gets rotated by RotY(90).
+                        # RotY(-90) matrix: [[0, 0, -1], [0, 1, 0], [1, 0, 0]]
+                        root_link_frame[:3, :3] = np.array(
+                            [[0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]
+                        )
                         break
             link_to_rec[root_name].frame_transform = root_link_frame
 

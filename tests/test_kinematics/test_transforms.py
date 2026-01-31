@@ -107,8 +107,17 @@ def test_condensed_robot_transforms():
     parent_link = links["parentlink"]
     child_link = links["childlink"]
 
-    # Root link frame should have Translation from Part, but Identity Rotation
-    expected_root_tf = np.eye(4)
+    # Root link frame should have Translation from Part, and RotY(-90) Rotation
+    # to align with STEP coordinate system (X-up vs Z-up mismatch)
+    Ry_neg90 = np.array(
+        [
+            [0.0, 0.0, -1.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    expected_root_tf = Ry_neg90.copy()
     expected_root_tf[:3, 3] = T_WP_parent[:3, 3]  # Copy translation
     np.testing.assert_allclose(parent_link.frame_transform, expected_root_tf, atol=1e-7)
 
@@ -122,8 +131,7 @@ def test_condensed_robot_transforms():
     joint_rec = edges[0][2]["joint"]
 
     # Joint origin = inv(T_parent_link) @ T_WJ
-    # Since T_parent_link has same Translation as T_WJ's parent component,
-    # but Identity rotation, the result should be the Rotation of T_WP_parent applied to T_PJ
+    # This will now include the inv(RotY(-90)) rotation = RotY(90)
     expected_origin = np.linalg.inv(expected_root_tf) @ T_WJ
 
     # Construct actual matrix from Origin object
