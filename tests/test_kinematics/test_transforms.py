@@ -107,32 +107,22 @@ def test_condensed_robot_transforms():
     parent_link = links["parentlink"]
     child_link = links["childlink"]
 
-    # Root link frame should have Translation from Part, and RotY(-90) Rotation
-    # to align with STEP coordinate system (X-up vs Z-up mismatch)
-    Ry_neg90 = np.array(
-        [
-            [0.0, 0.0, -1.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    expected_root_tf = Ry_neg90.copy()
-    expected_root_tf[:3, 3] = T_WP_parent[:3, 3]  # Copy translation
-    np.testing.assert_allclose(parent_link.frame_transform, expected_root_tf, atol=1e-7)
+    # Root link frame should match the CAD API part world transform
+    # (unified handling with child links - no special rotation correction)
+    np.testing.assert_allclose(parent_link.frame_transform, T_WP_parent, atol=1e-7)
 
     # Child link frame_transform should be T_WJ = T_WP_parent @ T_PJ
     T_WJ = T_WP_parent @ T_PJ
     np.testing.assert_allclose(child_link.frame_transform, T_WJ, atol=1e-7)
 
-    # - JointRecord.origin is correctly calculated (parent frame to joint frame).
+    # Joint origin should be inv(parent_frame) @ child_frame
     edges = list(robot.edges(data=True))
     assert len(edges) == 1
     joint_rec = edges[0][2]["joint"]
 
-    # Joint origin = inv(T_parent_link) @ T_WJ
-    # This will now include the inv(RotY(-90)) rotation = RotY(90)
-    expected_origin = np.linalg.inv(expected_root_tf) @ T_WJ
+    # With unified root/child handling:
+    # expected_origin = inv(T_WP_parent) @ T_WJ
+    expected_origin = np.linalg.inv(T_WP_parent) @ T_WJ
 
     # Construct actual matrix from Origin object
     from scipy.spatial.transform import Rotation
