@@ -344,6 +344,9 @@ class CondensedRobot(Robot):
                                     )
                                     break
                     if found:
+                        # Reset rotation to identity to keep base link aligned with world
+                        # This ensures the mesh is rotated correctly (Z-up) but placed at the part's origin
+                        root_link_frame[:3, :3] = np.eye(3)
                         break
             link_to_rec[root_name].frame_transform = root_link_frame
 

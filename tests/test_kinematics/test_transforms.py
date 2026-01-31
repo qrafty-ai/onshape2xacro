@@ -71,8 +71,18 @@ def test_condensed_robot_transforms():
     graph.edges = [MockEdge(node_parent, node_child, mate)]
 
     # 3. Mock 'cad' with parts having 'worldToPartTF.to_tf'.
-    # Parent Part World Transform: 1m in Y
+    # Parent Part World Transform: 1m in Y, Rotated 90 deg around X
+    theta = np.pi / 2
+    Rx_90 = np.array(
+        [
+            [1, 0, 0, 0],
+            [0, np.cos(theta), -np.sin(theta), 0],
+            [0, np.sin(theta), np.cos(theta), 0],
+            [0, 0, 0, 1],
+        ]
+    )
     T_WP_parent = np.eye(4)
+    T_WP_parent[:3, :3] = Rx_90[:3, :3]
     T_WP_parent[1, 3] = 1.0
 
     class MockPart:
@@ -97,20 +107,31 @@ def test_condensed_robot_transforms():
     parent_link = links["parentlink"]
     child_link = links["childlink"]
 
-    # - LinkRecord.frame_transform is correctly calculated.
-    # Root link (ParentLink) should now have the part's world transform
-    np.testing.assert_allclose(parent_link.frame_transform, T_WP_parent)
+    # Root link frame should have Translation from Part, but Identity Rotation
+    expected_root_tf = np.eye(4)
+    expected_root_tf[:3, 3] = T_WP_parent[:3, 3]  # Copy translation
+    np.testing.assert_allclose(parent_link.frame_transform, expected_root_tf, atol=1e-7)
 
     # Child link frame_transform should be T_WJ = T_WP_parent @ T_PJ
     T_WJ = T_WP_parent @ T_PJ
-    np.testing.assert_allclose(child_link.frame_transform, T_WJ)
+    np.testing.assert_allclose(child_link.frame_transform, T_WJ, atol=1e-7)
 
     # - JointRecord.origin is correctly calculated (parent frame to joint frame).
     edges = list(robot.edges(data=True))
     assert len(edges) == 1
     joint_rec = edges[0][2]["joint"]
 
-    # Joint origin translation should be [0.1, 0, 0] (local offset)
-    expected_xyz = np.array([0.1, 0.0, 0.0])
-    np.testing.assert_allclose(joint_rec.origin.xyz, expected_xyz)
-    np.testing.assert_allclose(joint_rec.origin.rpy, [0.0, 0.0, 0.0], atol=1e-7)
+    # Joint origin = inv(T_parent_link) @ T_WJ
+    # Since T_parent_link has same Translation as T_WJ's parent component,
+    # but Identity rotation, the result should be the Rotation of T_WP_parent applied to T_PJ
+    expected_origin = np.linalg.inv(expected_root_tf) @ T_WJ
+
+    # Construct actual matrix from Origin object
+    from scipy.spatial.transform import Rotation
+
+    actual_matrix = np.eye(4)
+    actual_matrix[:3, 3] = joint_rec.origin.xyz
+    r = Rotation.from_euler("xyz", joint_rec.origin.rpy)
+    actual_matrix[:3, :3] = r.as_matrix()
+
+    np.testing.assert_allclose(actual_matrix, expected_origin, atol=1e-7)
