@@ -435,11 +435,18 @@ def _part_world_matrix(part: Any) -> np.ndarray:
     if part_tf is None:
         return np.eye(4)
     tf_value = getattr(part_tf, "to_tf", None)
+    mat = np.eye(4)
     if callable(tf_value):
-        return cast(np.ndarray, tf_value())
-    if tf_value is not None:
-        return cast(np.ndarray, tf_value)
-    return np.eye(4)
+        mat = cast(np.ndarray, tf_value())
+    elif tf_value is not None:
+        mat = cast(np.ndarray, tf_value)
+    else:
+        return np.eye(4)
+    if not np.allclose(mat[3, :], [0, 0, 0, 1]) and np.allclose(
+        mat[:, 3], [0, 0, 0, 1]
+    ):
+        return mat.T
+    return mat
 
 
 def split_step_to_meshes(
@@ -1036,54 +1043,27 @@ class StepMeshExporter:
             if not keys:
                 continue
 
-            used_indices: Dict[Any, int] = {}
+            # Use CAD-derived transforms (same as ZIP path) for consistency with joint origins.
+            # The STEP shapes are in local part coordinates, so we use CAD API transforms
+            # to place them relative to the link frame.
+            valid_keys = [
+                k
+                for k in keys
+                if self.cad.parts.get(k)
+                and not getattr(self.cad.parts[k], "isRigidAssembly", False)
+            ]
+            if not valid_keys:
+                continue
 
-            # Link frame transform (World to Link)
-            link_matrix = getattr(link, "frame_transform", None)
-            if link_matrix is not None:
-                # Scale translation from meters to millimeters to match STEP export
-                link_matrix = link_matrix.copy()
-                link_matrix[:3, 3] *= 1000.0
-                link_loc = TopLoc_Location(_matrix_to_trsf(link_matrix))
-            else:
-                # Fallback to first part's location from STEP
-                link_loc = None
-                for key in keys:
-                    part = self.cad.parts.get(key)
-                    if part is None or getattr(part, "isRigidAssembly", False):
-                        continue
+            link_world = getattr(link, "frame_transform", None)
+            if link_world is None:
+                ref_key = valid_keys[0]
+                link_world = _part_world_matrix(self.cad.parts[ref_key])
 
-                    # Try occurrence path first
-                    part_path = getattr(key, "path", None)
-                    if part_path:
-                        part_path = tuple(part_path)
-                    if part_path in part_locations:
-                        link_loc = part_locations[part_path][0]
-                        break
-
-                    inst_name = _instance_leaf_name(key)
-                    if inst_name in part_locations:
-                        link_loc = part_locations[inst_name][0]
-                        break
-
-                    # Try name path from instances
-                    name_path = _name_path_for_key(key)
-                    if name_path in part_locations:
-                        link_loc = part_locations[name_path][0]
-                        break
-
-                    leaf_name = _normalized_leaf_name(name_path)
-                    if leaf_name in part_locations:
-                        link_loc = part_locations[leaf_name][0]
-                        break
-
-                    # Try part ID
-                    part_id = getattr(part, "partId", str(key))
-                    if part_id in part_locations:
-                        link_loc = part_locations[part_id][0]
-                        break
-                if link_loc is None:
-                    link_loc = TopLoc_Location()
+            # Scale CAD transform (meters) to STEP coordinate system (millimeters)
+            link_world_mm = link_world.copy()
+            link_world_mm[:3, 3] *= 1000.0
+            link_world_inv = np.linalg.inv(link_world_mm)
 
             compound = TopoDS_Compound()
             builder = BRep_Builder()
@@ -1093,50 +1073,44 @@ class StepMeshExporter:
             part_metadata_list: List[Dict[str, str]] = []
 
             part_names_list = getattr(link, "part_names", [])
+            used_indices: Dict[Any, int] = {}
 
             for idx, key in enumerate(keys):
                 part = self.cad.parts.get(key)
                 if part is None or getattr(part, "isRigidAssembly", False):
                     continue
 
-                # Helper to pick shape and location from lists based on used indices
-                def _pick_match(match_key: Any):
+                def _pick_shape(match_key: Any):
                     shapes = part_shapes.get(match_key)
-                    locs = part_locations.get(match_key)
-                    if shapes and locs:
-                        idx = used_indices.get(match_key, 0)
-                        # If we have multiple occurrences, distribute them 1-to-1
-                        # If we run out, reuse the last one (better than missing)
-                        shape_idx = min(idx, len(shapes) - 1)
-                        used_indices[match_key] = idx + 1
-                        return shapes[shape_idx], locs[shape_idx]
-                    return None, None
+                    if shapes:
+                        shape_idx = used_indices.get(match_key, 0)
+                        shape_idx = min(shape_idx, len(shapes) - 1)
+                        used_indices[match_key] = shape_idx + 1
+                        return shapes[shape_idx]
+                    return None
 
-                # 1. Primary match: Occurrence Path (Tuple of IDs)
                 part_path = getattr(key, "path", None)
                 if part_path:
                     part_path = tuple(part_path)
-                shape, part_loc = _pick_match(part_path)
-                name_path = None
+                shape = _pick_shape(part_path)
 
-                if shape is None or part_loc is None:
+                if shape is None:
                     inst_name = _instance_leaf_name(key)
-                    shape, part_loc = _pick_match(inst_name)
+                    shape = _pick_shape(inst_name)
 
-                if shape is None or part_loc is None:
+                if shape is None:
                     name_path = _name_path_for_key(key)
-                    shape, part_loc = _pick_match(name_path)
+                    shape = _pick_shape(name_path)
 
-                if shape is None or part_loc is None:
+                if shape is None:
                     leaf_name = _normalized_leaf_name(name_path)
-                    shape, part_loc = _pick_match(leaf_name)
+                    shape = _pick_shape(leaf_name)
 
-                if shape is None or part_loc is None:
-                    # 2. Secondary match: Part Studio ID (String)
+                if shape is None:
                     part_id = getattr(part, "partId", str(key))
-                    shape, part_loc = _pick_match(part_id)
+                    shape = _pick_shape(part_id)
 
-                if shape is None or part_loc is None:
+                if shape is None:
                     link_missing_parts.append(
                         {
                             "part_id": getattr(part, "partId", str(key)),
@@ -1151,8 +1125,13 @@ class StepMeshExporter:
                     )
                     continue
 
-                rel_loc = _relative_location(part_loc, link_loc)
-                builder.Add(compound, shape.Located(rel_loc))
+                part_world = _part_world_matrix(part)
+                part_world_mm = part_world.copy()
+                part_world_mm[:3, 3] *= 1000.0
+                link_from_part = link_world_inv @ part_world_mm
+                trsf = _matrix_to_trsf(link_from_part)
+                transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
+                builder.Add(compound, transformed)
                 has_valid_shapes = True
 
                 part_name_from_list = (
