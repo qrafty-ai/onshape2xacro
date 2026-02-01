@@ -35,6 +35,7 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
+    "ipdb>=0.13.13",
     "pytest",
 ]
 visualize = [
