@@ -4,6 +4,11 @@ import numpy as np
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
 from onshape_robotics_toolkit.models.assembly import Occurrence
 from onshape2xacro.condensed_robot import CondensedRobot
+from onshape2xacro.mate_values import (
+    fetch_mate_values,
+    load_mate_values,
+    save_mate_values,
+)
 from onshape2xacro.serializers import XacroSerializer
 from onshape2xacro.config import ConfigOverride
 from onshape2xacro.cli import (
@@ -94,9 +99,23 @@ def run_export(config: ExportConfig):
                 )
         if bom_path is None and (url_path / "bom.csv").exists():
             bom_path = url_path / "bom.csv"
+
+        # Load mate values if available locally
+        mate_values = load_mate_values(url_path / "mate_values.json")
+        if not mate_values:
+            print(
+                "Warning: No 'mate_values.json' found locally. Assuming zero configuration."
+            )
+
     else:
         client, cad = _get_client_and_cad(config.url, config.max_depth)
         asset_path = None
+
+        # Fetch mate values from API
+        print("Fetching mate values...")
+        mate_values = fetch_mate_values(
+            client, cad.document_id, cad.wtype, cad.workspace_id, cad.element_id
+        )
 
     # 3. Build Kinematic Graph
     print("Building kinematic graph...")
@@ -105,7 +124,9 @@ def run_export(config: ExportConfig):
     # 4. Create Robot Model
     print("Creating robot model...")
     robot_name = config.name or cad.name or "robot"
-    robot = CondensedRobot.from_graph(graph, cad=cad, name=robot_name)
+    robot = CondensedRobot.from_graph(
+        graph, cad=cad, name=robot_name, mate_values=mate_values
+    )
     # Set client and cad for serializer's mesh export
     robot.client = client
     robot.cad = cad
@@ -159,6 +180,13 @@ def run_fetch_cad(config: FetchCadConfig):
     print(f"Exporting STEP assembly to {output_dir / 'assembly.step'}...")
     exporter = StepMeshExporter(client, cad)
     exporter.export_step(output_dir / "assembly.step")
+
+    print("Fetching mate values...")
+    mate_values = fetch_mate_values(
+        client, cad.document_id, cad.wtype, cad.workspace_id, cad.element_id
+    )
+    save_mate_values(output_dir / "mate_values.json", mate_values)
+    print(f"Saved mate values to {output_dir / 'mate_values.json'}")
 
     if config.bom:
         if not config.bom.exists():
