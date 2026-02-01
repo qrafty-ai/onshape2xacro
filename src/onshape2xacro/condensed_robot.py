@@ -82,6 +82,22 @@ def _iter_edges(graph) -> Iterable[Tuple[Any, Any, Any]]:
             yield u, v, mate
 
 
+def to_id_tuple(occ) -> tuple[str, ...]:
+    if occ is None:
+        return ()
+    if hasattr(occ, "path") and isinstance(occ.path, (list, tuple)):
+        return tuple(str(x) for x in occ.path)
+    if isinstance(occ, (list, tuple)):
+        return tuple(str(x) for x in occ)
+    if isinstance(occ, str):
+        if " " in occ:
+            return tuple(occ.split(" "))
+        if "/" in occ:
+            return tuple(occ.split("/"))
+        return (occ,) if occ else ()
+    return (str(occ),)
+
+
 def occ_match(occ1, occ2):
     """
     Check if two Onshape occurrences match by checking their common suffix.
@@ -89,19 +105,6 @@ def occ_match(occ1, occ2):
     """
     if occ1 is None or occ2 is None:
         return False
-
-    def to_id_tuple(occ) -> tuple[str, ...]:
-        if hasattr(occ, "path") and isinstance(occ.path, (list, tuple)):
-            return tuple(str(x) for x in occ.path)
-        if isinstance(occ, (list, tuple)):
-            return tuple(str(x) for x in occ)
-        if isinstance(occ, str):
-            if " " in occ:
-                return tuple(occ.split(" "))
-            if "/" in occ:
-                return tuple(occ.split("/"))
-            return (occ,) if occ else ()
-        return (str(occ),)
 
     t1 = to_id_tuple(occ1)
     t2 = to_id_tuple(occ2)
@@ -130,6 +133,7 @@ class CondensedRobot(Robot):
         cad: CAD,
         name="robot",
         mate_values: Optional[Dict[str, Any]] = None,
+        fail_fast: bool = True,
     ):
         """
         Create a condensed robot from a kinematic graph.
@@ -137,6 +141,7 @@ class CondensedRobot(Robot):
 
         Args:
             mate_values: Dictionary of mate values keyed by featureId.
+            fail_fast: If True, raise exception on missing part transforms instead of warning.
         """
         if mate_values is None:
             mate_values = {}
@@ -317,58 +322,80 @@ class CondensedRobot(Robot):
                 if next_name in visited:
                     continue
 
+                mate_name = getattr(mate, "name", f"joint_{curr_name}_{next_name}")
+                mate_type = getattr(mate, "mateType", "REVOLUTE")
+                mate_id = getattr(mate, "id", None)
+
                 # Calculate World transform of joint (mate connector)
                 # Choose the mate entity that belongs to the current (parent) link's occurrences
 
                 parent_entity = None
                 child_link = link_to_rec.get(next_name)
                 parent_occs = curr_link.occurrences
-                child_occs = child_link.occurrences
+                child_occs = child_link.occurrences if child_link else []
+                parent_occ = None
+
                 if parent_occs or child_occs:
-                    parent_candidates: list[tuple[MatedEntity, str]] = []
+                    parent_candidates: list[tuple[MatedEntity, list[str]]] = []
                     for entity in mate.matedEntities:
                         entity_occ = entity.matedOccurrence
-                        parent_match = any(
-                            occ_match(entity_occ, occ) for occ in parent_occs
+
+                        matched_parent_occ = next(
+                            (occ for occ in parent_occs if occ_match(entity_occ, occ)),
+                            None,
                         )
-                        child_match = any(
-                            occ_match(entity_occ, occ) for occ in child_occs
+                        matched_child_occ = next(
+                            (occ for occ in child_occs if occ_match(entity_occ, occ)),
+                            None,
                         )
 
-                        if parent_match and not child_match:
-                            # Strongest candidate: in parent link but not in child link
-                            parent_candidates.insert(0, (entity, entity_occ))
-                        elif parent_match:
-                            # Second best: in parent link
-                            parent_candidates.append((entity, entity_occ))
+                        if matched_parent_occ and not matched_child_occ:
+                            parent_candidates.insert(0, (entity, matched_parent_occ))
+                        elif matched_parent_occ:
+                            parent_candidates.append((entity, matched_parent_occ))
 
                     if parent_candidates:
-                        candidate = parent_candidates[0]
-                        parent_entity: MatedEntity = candidate[0]
+                        parent_entity, parent_occ = parent_candidates[0]
+                    elif mate.matedEntities:
+                        parent_entity = mate.matedEntities[0]
+                        parent_occ = parent_entity.matedOccurrence
+                        for occ in parent_occs:
+                            if occ_match(parent_occ, occ):
+                                parent_occ = occ
+                                break
 
-                # Always use the mate entity's occurrence for finding the part transform
-                # This is the actual part the mate connector is attached to
-                parent_occ = parent_entity.matedOccurrence
+                if parent_entity is None:
+                    logger.warning(
+                        f"Could not find mated entity for joint {mate_name}. Skipping."
+                    )
+                    continue
 
-                # Resolve to a PathKey when possible (cad.parts keys are PathKey)
-                parent_key = cad.keys_by_id.get(tuple(parent_occ))
+                if parent_occ is None:
+                    parent_occ = parent_entity.matedOccurrence
+
+                parent_key = cad.keys_by_id.get(to_id_tuple(parent_occ))
 
                 # We need the world transform of this part
-                parent_part_world = np.eye(4)
                 found_part = False
                 parent_part_world = cad.get_transform(parent_key)
-                # Normalize
-                if not np.allclose(
-                    parent_part_world[3, :], [0, 0, 0, 1]
-                ) and np.allclose(parent_part_world[:, 3], [0, 0, 0, 1]):
-                    parent_part_world = parent_part_world.T
-                found_part = True
+                if parent_part_world is not None:
+                    # Normalize
+                    if not np.allclose(
+                        parent_part_world[3, :], [0, 0, 0, 1]
+                    ) and np.allclose(parent_part_world[:, 3], [0, 0, 0, 1]):
+                        parent_part_world = parent_part_world.T
+                    found_part = True
+                else:
+                    parent_part_world = np.eye(4)
 
                 if not found_part:
-                    logger.warning(
+                    msg = (
                         f"Could not find part for occurrence {parent_occ} "
-                        f"(joint: {getattr(mate, 'name', 'unknown')}, links: {curr_name} -> {next_name})"
+                        f"(joint: {mate_name}, links: {curr_name} -> {next_name})"
                     )
+                    if fail_fast:
+                        raise RuntimeError(msg)
+                    logger.warning(msg)
 
                 T_PJ = parent_entity.matedCS.to_tf
                 T_WJ = parent_part_world @ T_PJ
@@ -385,56 +412,54 @@ class CondensedRobot(Robot):
                 #               = inv(T_mate) @ inv(T_WJ) @ T_WJ @ T_mate @ T_part_local
                 #               = T_part_local (Canonical/Zero Pose)
 
-                mate_name = getattr(mate, "name", f"joint_{curr_name}_{next_name}")
-                mate_type = getattr(mate, "mateType", "REVOLUTE")
-                mate_id = getattr(mate, "id", None)
-
                 # Calculate correction transform based on current mate values
                 T_mate_correction = np.eye(4)
                 if mate_id and mate_id in mate_values:
                     values = mate_values[mate_id]
+                    if values is not None:
+                        # Determine correction sign based on whether the parent entity is the
+                        # first or second entity in the mate definition.
+                        # MatedEntities[0] is usually the "Child" (Moving) in Onshape UI context,
+                        # but mate values are relative.
+                        # If parent is MatedEntities[0], then Child is [1].
+                        # Value is [0] relative to [1] (or vice versa).
+                        # Standard assumption: Value is [0] relative to [1].
+                        # If Parent is [1] (Base), Child is [0] (Moving). Child = Parent @ Value. -> Positive
+                        # If Parent is [0] (Base), Child is [1] (Moving). Parent = Child @ Value -> Child = Parent @ inv(Value). -> Negative
 
-                    # Determine correction sign based on whether the parent entity is the
-                    # first or second entity in the mate definition.
-                    # MatedEntities[0] is usually the "Child" (Moving) in Onshape UI context,
-                    # but mate values are relative.
-                    # If parent is MatedEntities[0], then Child is [1].
-                    # Value is [0] relative to [1] (or vice versa).
-                    # Standard assumption: Value is [0] relative to [1].
-                    # If Parent is [1] (Base), Child is [0] (Moving). Child = Parent @ Value. -> Positive
-                    # If Parent is [0] (Base), Child is [1] (Moving). Parent = Child @ Value -> Child = Parent @ inv(Value). -> Negative
+                        is_parent_first = parent_entity == mate.matedEntities[0]
+                        sign = -1.0 if is_parent_first else 1.0
 
-                    is_parent_first = parent_entity == mate.matedEntities[0]
-                    sign = -1.0 if is_parent_first else 1.0
-
-                    # Onshape mates align Z axis for primary motion
-                    if mate_type == "REVOLUTE":
-                        angle = values.get("rotationZ", 0.0) * sign
-                        if abs(angle) > 1e-6:
-                            c, s = np.cos(angle), np.sin(angle)
-                            T_mate_correction[:3, :3] = np.array(
-                                [[c, -s, 0], [s, c, 0], [0, 0, 1]]
-                            )
-                    elif mate_type == "PRISMATIC":
-                        dist = values.get("translationZ", 0.0) * sign
-                        if abs(dist) > 1e-6:
-                            T_mate_correction[2, 3] = dist
-                    elif mate_type == "CYLINDRICAL":
-                        angle = values.get("rotationZ", 0.0) * sign
-                        dist = values.get("translationZ", 0.0) * sign
-                        if abs(angle) > 1e-6:
-                            c, s = np.cos(angle), np.sin(angle)
-                            T_mate_correction[:3, :3] = np.array(
-                                [[c, -s, 0], [s, c, 0], [0, 0, 1]]
-                            )
-                        if abs(dist) > 1e-6:
-                            T_mate_correction[2, 3] = dist
+                        # Onshape mates align Z axis for primary motion
+                        if mate_type == "REVOLUTE":
+                            angle = values.get("rotationZ", 0.0) * sign
+                            if abs(angle) > 1e-6:
+                                c, s = np.cos(angle), np.sin(angle)
+                                T_mate_correction[:3, :3] = np.array(
+                                    [[c, -s, 0], [s, c, 0], [0, 0, 1]]
+                                )
+                        elif mate_type == "PRISMATIC":
+                            dist = values.get("translationZ", 0.0) * sign
+                            if abs(dist) > 1e-6:
+                                T_mate_correction[2, 3] = dist
+                        elif mate_type == "CYLINDRICAL":
+                            angle = values.get("rotationZ", 0.0) * sign
+                            dist = values.get("translationZ", 0.0) * sign
+                            if abs(angle) > 1e-6:
+                                c, s = np.cos(angle), np.sin(angle)
+                                T_mate_correction[:3, :3] = np.array(
+                                    [[c, -s, 0], [s, c, 0], [0, 0, 1]]
+                                )
+                            if abs(dist) > 1e-6:
+                                T_mate_correction[2, 3] = dist
 
                 # Child link frame adjusted for current mate value
                 T_target_child = T_WJ @ T_mate_correction
 
                 # Joint origin = transform from parent link frame to joint world frame (Zero Pose)
                 # We use T_WJ (which represents the joint frame at zero pose on the parent side)
+                if T_WC is None:
+                    T_WC = np.eye(4)
                 T_origin_mat = np.linalg.inv(T_WC) @ T_WJ
 
                 joint_origin = Origin.from_matrix(T_origin_mat)

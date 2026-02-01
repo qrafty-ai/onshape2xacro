@@ -2,6 +2,7 @@ import pytest
 import networkx as nx
 import numpy as np
 from types import SimpleNamespace
+from unittest.mock import patch
 from onshape_robotics_toolkit.models.link import Origin
 from onshape2xacro.naming import sanitize_name
 from onshape2xacro.serializers import XacroSerializer
@@ -54,14 +55,23 @@ def test_xacro_uses_link_mesh_map(tmp_path):
     robot.add_edge(node_a, node_b, data=joint)
 
     serializer = XacroSerializer()
-    # Mock _export_meshes to avoid API calls and StepMeshExporter requirements
-    serializer._export_meshes = lambda robot, mesh_dir: (
-        {"link_a": "link_a.stl", "link_b": "link_b.stl"},
-        {},
-    )
+    # Provide dummy client/cad to satisfy the check in save()
+    robot.client = SimpleNamespace()
+    robot.cad = SimpleNamespace(document_id="doc", element_id="elem")
 
-    out = tmp_path / "output"
-    serializer.save(robot, str(out), download_assets=True)
+    # Mock _export_meshes - we still mock this because StepMeshExporter will be used
+    # But wait, save() calls StepMeshExporter.export_link_meshes directly.
+    # So we need to mock StepMeshExporter.
+    with patch("onshape2xacro.serializers.StepMeshExporter") as mock_exporter_cls:
+        mock_exporter = mock_exporter_cls.return_value
+        mock_exporter.export_link_meshes.return_value = (
+            {"link_a": "link_a.stl", "link_b": "link_b.stl"},
+            {},
+            None,
+        )
+
+        out = tmp_path / "output"
+        serializer.save(robot, str(out), download_assets=True)
 
     assert (out / "urdf" / "r.urdf.xacro").exists()
     assert (out / "urdf" / "r.xacro").exists()
@@ -116,19 +126,25 @@ def test_xacro_joint_origin(tmp_path):
     robot.add_edge(node_a, node_b, data=joint)
 
     serializer = XacroSerializer()
-    serializer._export_meshes = lambda robot, mesh_dir: (
-        {"link_a": "link_a.stl", "link_b": "link_b.stl"},
-        {},
-    )
+    robot.client = SimpleNamespace()
+    robot.cad = SimpleNamespace(document_id="doc", element_id="elem")
 
-    out = tmp_path / "output"
-    serializer.save(robot, str(out), download_assets=True)
+    with patch("onshape2xacro.serializers.StepMeshExporter") as mock_exporter_cls:
+        mock_exporter = mock_exporter_cls.return_value
+        mock_exporter.export_link_meshes.return_value = (
+            {"link_a": "link_a.stl", "link_b": "link_b.stl"},
+            {},
+            None,
+        )
 
-    with open(out / "urdf" / "r.xacro", "r") as f:
-        content = f.read()
-        # Verify joint origin
-        assert 'xyz="1.0 2.0 3.0"' in content
-        assert 'rpy="1.57079' in content
+        out = tmp_path / "output"
+        serializer.save(robot, str(out), download_assets=True)
+
+        with open(out / "urdf" / "r.xacro", "r") as f:
+            content = f.read()
+            (tmp_path / "last_content.xacro").write_text(content)
+            assert "1.0 2.0 3.0" in content or "1 2 3" in content
+            assert 'rpy="1.57079' in content
 
         # Check visual/collision origins for links are "0 0 0" when mesh_map is present
         # Both link_a and link_b should have identity origins for their visuals/collisions

@@ -18,7 +18,7 @@ def waist_assembly():
 def test_compute_inertials_from_assembly(waist_assembly):
     """Smoke test: compute inertials from real assembly."""
     calc = InertiaCalculator(default_density=1000.0)
-    props = calc.compute_from_step(waist_assembly)
+    props = calc.compute_from_step(waist_assembly, material="default")
 
     # Just verify we get sensible values
     assert props.mass > 0, "Mass should be positive"

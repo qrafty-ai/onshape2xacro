@@ -5,6 +5,10 @@ from onshape2xacro import pipeline
 def test_run_export_uses_condensed_robot(monkeypatch, tmp_path):
     class DummyCad:
         name = "dummy_cad"
+        document_id = "doc123"
+        wtype = "w"
+        workspace_id = "ws456"
+        element_id = "elem789"
 
     class DummyClient:
         pass
@@ -21,7 +25,7 @@ def test_run_export_uses_condensed_robot(monkeypatch, tmp_path):
         called["graph_cad"] = cad
         return dummy_graph
 
-    def fake_from_graph(graph, cad, name):
+    def fake_from_graph(graph, cad, name, **kwargs):
         called["graph"] = graph
         called["cad_arg"] = cad
         called["name"] = name
@@ -32,7 +36,7 @@ def test_run_export_uses_condensed_robot(monkeypatch, tmp_path):
         return DummyRobot()
 
     class DummySerializer:
-        def save(self, robot, output, download_assets, config):
+        def save(self, robot, output, download_assets, **kwargs):
             called["saved_robot"] = robot
 
     monkeypatch.setattr(pipeline, "_get_client_and_cad", fake_get_client_and_cad)
@@ -69,7 +73,7 @@ def test_run_export_prefetched_uses_client_if_credentials_available(
             self.kwargs = kwargs
 
     class DummySerializer:
-        def save(self, robot, output, download_assets, config):
+        def save(self, robot, output, download_assets, **kwargs):
             assert robot.client is not None
 
     def fake_get_credentials():
@@ -78,7 +82,7 @@ def test_run_export_prefetched_uses_client_if_credentials_available(
     def fake_from_cad(cad):
         return object()
 
-    def fake_from_graph(graph, cad, name):
+    def fake_from_graph(graph, cad, name, **kwargs):
         class DummyRobot:
             pass
 

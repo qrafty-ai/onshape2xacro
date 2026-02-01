@@ -24,6 +24,8 @@ class ExportConfig:
     """Maximum subassembly traversal depth."""
     visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
     """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
+    debug: bool = False
+    """Enable debug mode with full tracebacks."""
 
 
 @dataclass
@@ -132,6 +134,8 @@ def main():
     except SystemExit:
         raise
     except Exception as e:
+        if getattr(config, "debug", False):
+            raise
         print(f"Error: {e}")
         sys.exit(1)
 

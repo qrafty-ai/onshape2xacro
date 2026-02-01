@@ -374,6 +374,23 @@ class StepMeshExporter:
         def _extract_step_from_content(raw: bytes) -> bytes | None:
             if raw.lstrip().startswith(b"ISO-10303-21"):
                 return raw
+
+            # Check for zip header (PK\x03\x04)
+            if raw.startswith(b"PK\x03\x04"):
+                import io
+
+                try:
+                    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                        for name in zf.namelist():
+                            if name.lower().endswith(".step") or name.lower().endswith(
+                                ".stp"
+                            ):
+                                with zf.open(name) as f:
+                                    content = f.read()
+                                    if content.lstrip().startswith(b"ISO-10303-21"):
+                                        return content
+                except zipfile.BadZipFile:
+                    pass
             return None
 
         found_step = False

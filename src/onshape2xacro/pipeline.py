@@ -125,7 +125,12 @@ def run_export(config: ExportConfig):
     print("Creating robot model...")
     robot_name = config.name or cad.name or "robot"
     robot = CondensedRobot.from_graph(
-        graph, cad=cad, name=robot_name, mate_values=mate_values
+        graph,
+        cad=cad,
+        name=robot_name,
+        mate_values=mate_values,
+        # Pass fail_fast parameter derived from debug configuration
+        fail_fast=getattr(config, "debug", False),
     )
     # Set client and cad for serializer's mesh export
     robot.client = client
@@ -186,6 +191,55 @@ def run_fetch_cad(config: FetchCadConfig):
     mate_values = fetch_mate_values(
         client, cad.document_id, cad.wtype, cad.workspace_id, cad.element_id
     )
+
+    # Fetch mate values for subassemblies
+    processed_assemblies = {
+        (cad.document_id, cad.wtype, cad.workspace_id, cad.element_id)
+    }
+
+    if hasattr(cad, "subassemblies") and hasattr(cad, "instances"):
+        for key in cad.subassemblies:
+            if key not in cad.instances:
+                continue
+
+            inst = cad.instances[key]
+            if getattr(inst, "type", None) != "Assembly":
+                continue
+
+            did = getattr(inst, "documentId", None)
+            eid = getattr(inst, "elementId", None)
+
+            if not did or not eid:
+                continue
+
+            wvm = None
+            wvmid = None
+
+            if did == cad.document_id:
+                # If in the same document, use the root's WVM to ensure we get the element
+                # as it exists in the current context.
+                wvm = cad.wtype
+                wvmid = cad.workspace_id
+            elif getattr(inst, "documentVersion", None):
+                wvm = "v"
+                wvmid = inst.documentVersion
+            elif getattr(inst, "documentMicroversion", None):
+                wvm = "m"
+                wvmid = inst.documentMicroversion
+
+            if wvm and wvmid:
+                ident = (did, wvm, wvmid, eid)
+                if ident not in processed_assemblies:
+                    try:
+                        sub_values = fetch_mate_values(client, did, wvm, wvmid, eid)
+                        if sub_values:
+                            mate_values.update(sub_values)
+                    except Exception as e:
+                        print(
+                            f"Warning: Failed to fetch mate values for subassembly {eid}: {e}"
+                        )
+                    processed_assemblies.add(ident)
+
     save_mate_values(output_dir / "mate_values.json", mate_values)
     print(f"Saved mate values to {output_dir / 'mate_values.json'}")
 
