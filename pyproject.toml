@@ -16,6 +16,7 @@ dependencies = [
     "scipy>=1.17.0",
     "pymeshlab>=2025.7",
     "cadquery>=2.6.1",
+    "pycollada>=0.8",
 ]
 
 [project.scripts]
