@@ -114,15 +114,6 @@ def _read_file_header(path: Path, max_bytes: int = 512) -> bytes:
         return handle.read(max_bytes)
 
 
-def _export_name_from_filename(filename: str) -> str:
-    name = re.sub(r"^.* - ", "", filename)
-    if name.lower().endswith(".step"):
-        name = name[:-5]
-    elif name.lower().endswith(".stp"):
-        name = name[:-4]
-    return name
-
-
 def _matrix_to_trsf(matrix: np.ndarray) -> gp_Trsf:
     from scipy.spatial.transform import Rotation
 
@@ -179,22 +170,6 @@ def _combine_locations(
         except Exception:
             pass
     return local_loc
-
-
-def _relative_location(
-    part_loc: TopLoc_Location, link_loc: TopLoc_Location
-) -> TopLoc_Location:
-    if hasattr(link_loc, "Inverted"):
-        try:
-            inv = link_loc.Inverted()
-            if hasattr(inv, "Multiplied"):
-                return inv.Multiplied(part_loc)
-            if hasattr(inv, "Multiply"):
-                inv.Multiply(part_loc)
-                return inv
-        except Exception:
-            pass
-    return part_loc
 
 
 def _iter_components(shape_tool: Any, label: TDF_Label) -> Iterable[TDF_Label]:
@@ -314,37 +289,6 @@ def _get_free_shape_labels(shape_tool: Any) -> TDF_LabelSequence:
     return labels
 
 
-def _get_shape(shape_tool: Any, label: TDF_Label):
-    get_shape = getattr(shape_tool, "GetShape_s", None)
-    if not callable(get_shape):
-        get_shape = getattr(shape_tool, "GetShape", None)
-    if not callable(get_shape):
-        raise RuntimeError("ShapeTool missing GetShape method")
-    return get_shape(label)
-
-
-def _load_step_shapes(step_path: Path) -> list[Any]:
-    doc = TDocStd_Document(TCollection_ExtendedString("step"))
-    reader = STEPCAFControl_Reader()
-    reader.SetNameMode(True)
-
-    status = reader.ReadFile(str(step_path))
-    if status != IFSelect_RetDone:
-        raise RuntimeError(f"STEP read failed: {status}")
-
-    reader.Transfer(doc)
-    shape_tool = _get_shape_tool(doc)
-    labels = _get_free_shape_labels(shape_tool)
-
-    shapes = []
-    for i in range(labels.Length()):
-        label = labels.Value(i + 1)
-        shape = cast(Any, _get_shape(shape_tool, label))
-        if not shape.IsNull():
-            shapes.append(shape)
-    return shapes
-
-
 def _part_world_matrix(part: Any) -> np.ndarray:
     part_tf = getattr(part, "worldToPartTF", None)
     if part_tf is None:
@@ -362,72 +306,6 @@ def _part_world_matrix(part: Any) -> np.ndarray:
     ):
         return mat.T
     return mat
-
-
-def split_step_to_meshes(
-    step_path: Path, link_groups: Dict[str, list[str]], mesh_dir: Path
-) -> Dict[str, str]:
-    doc = TDocStd_Document(TCollection_ExtendedString("step"))
-    reader = STEPCAFControl_Reader()
-    reader.SetNameMode(True)
-
-    status = reader.ReadFile(str(step_path))
-    if status != IFSelect_RetDone:
-        raise RuntimeError(f"STEP read failed: {status}")
-
-    reader.Transfer(doc)
-    shape_tool = _get_shape_tool(doc)
-
-    labels = TDF_LabelSequence()
-    get_free_shapes = getattr(shape_tool, "GetFreeShapes", None)
-    if not callable(get_free_shapes):
-        get_free_shapes = getattr(shape_tool, "GetFreeShapes_s", None)
-    if not callable(get_free_shapes):
-        raise RuntimeError("ShapeTool missing GetFreeShapes method")
-    get_free_shapes(labels)
-
-    part_shapes: Dict[str, Any] = {}
-    part_locations: Dict[str, TopLoc_Location] = {}
-
-    for i in range(labels.Length()):
-        label = labels.Value(i + 1)
-        _collect_shapes(
-            shape_tool, label, TopLoc_Location(), part_shapes, part_locations
-        )
-
-    if not part_shapes:
-        raise RuntimeError("No shapes found in STEP file")
-
-    mesh_dir.mkdir(parents=True, exist_ok=True)
-    stl_writer = StlAPI_Writer()
-    mesh_map: Dict[str, str] = {}
-
-    for link_name, part_ids in link_groups.items():
-        if not part_ids:
-            continue
-
-        link_loc = part_locations.get(part_ids[0], TopLoc_Location())
-        compound = TopoDS_Compound()
-        builder = BRep_Builder()
-        builder.MakeCompound(compound)
-
-        for part_id in part_ids:
-            shapes = part_shapes.get(part_id)
-            if not shapes:
-                raise RuntimeError(f"Missing part id in STEP: {part_id}")
-
-            locs = part_locations.get(part_id, [TopLoc_Location()])
-            # Add all occurrences of this part ID
-            for shape, part_loc in zip(shapes, locs):
-                rel_loc = _relative_location(part_loc, link_loc)
-                builder.Add(compound, shape.Located(rel_loc))
-
-        BRepMesh_IncrementalMesh(compound, 0.01)
-        out_path = mesh_dir / f"{link_name}.stl"
-        stl_writer.Write(compound, str(out_path))
-        mesh_map[link_name] = out_path.name
-
-    return mesh_map
 
 
 class StepMeshExporter:
