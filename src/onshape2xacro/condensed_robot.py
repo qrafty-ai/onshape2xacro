@@ -82,27 +82,6 @@ def _iter_edges(graph) -> Iterable[Tuple[Any, Any, Any]]:
             yield u, v, mate
 
 
-def _part_world_matrix(part: Any) -> np.ndarray:
-    """Extract 4x4 world transform from a CAD part."""
-    part_tf = getattr(part, "worldToPartTF", None)
-    mat = np.eye(4)
-    if part_tf is not None:
-        tf_value = getattr(part_tf, "to_tf", None)
-        if callable(tf_value):
-            mat = cast(np.ndarray, tf_value())
-        elif tf_value is not None:
-            mat = cast(np.ndarray, tf_value)
-
-    # Check for transpose (Onshape often returns column-major which numpy reads as transposed row-major if not reshaped with order='F')
-    # Standard rigid transform has [0,0,0,1] as last row.
-    # If last column is [0,0,0,1] and last row is not, it's transposed.
-    if not np.allclose(mat[3, :], [0, 0, 0, 1]) and np.allclose(
-        mat[:, 3], [0, 0, 0, 1]
-    ):
-        return mat.T
-    return mat
-
-
 def occ_match(occ1, occ2):
     """
     Check if two Onshape occurrences match by checking their common suffix.
