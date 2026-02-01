@@ -15,9 +15,9 @@ def test_condensed_robot_transforms():
     - Joint is translated by [0.1, 0, 0] relative to Parent Part.
 
     Expected:
-    - parentlink.frame_transform = Identity
+    - parentlink.frame_transform = T_WP_parent = Translation([0, 1, 0])
     - childlink.frame_transform = T_WP_parent @ T_PJ = Translation([0.1, 1.0, 0.0])
-    - Joint.origin = inv(parentlink.frame_transform) @ childlink.frame_transform = Translation([0.1, 1.0, 0.0])
+    - Joint.origin = inv(parentlink.frame_transform) @ childlink.frame_transform = T_PJ = Translation([0.1, 0, 0])
     """
     # 1. Create a simple 2-link robot (Parent -> Joint -> Child).
     graph = MagicMock()
@@ -71,8 +71,18 @@ def test_condensed_robot_transforms():
     graph.edges = [MockEdge(node_parent, node_child, mate)]
 
     # 3. Mock 'cad' with parts having 'worldToPartTF.to_tf'.
-    # Parent Part World Transform: 1m in Y
+    # Parent Part World Transform: 1m in Y, Rotated 90 deg around X
+    theta = np.pi / 2
+    Rx_90 = np.array(
+        [
+            [1, 0, 0, 0],
+            [0, np.cos(theta), -np.sin(theta), 0],
+            [0, np.sin(theta), np.cos(theta), 0],
+            [0, 0, 0, 1],
+        ]
+    )
     T_WP_parent = np.eye(4)
+    T_WP_parent[:3, :3] = Rx_90[:3, :3]
     T_WP_parent[1, 3] = 1.0
 
     class MockPart:
@@ -83,6 +93,8 @@ def test_condensed_robot_transforms():
 
     cad = MagicMock()
     cad.parts = {"p_parent": MockPart("occ_parent", T_WP_parent)}
+    cad.occurrences = {}
+    cad.get_transform.return_value = T_WP_parent
 
     # 4. Run CondensedRobot.from_graph
     robot = CondensedRobot.from_graph(graph, cad=cad)
@@ -95,20 +107,29 @@ def test_condensed_robot_transforms():
     parent_link = links["parentlink"]
     child_link = links["childlink"]
 
-    # - LinkRecord.frame_transform is correctly calculated.
-    # Root link (ParentLink) should have identity
-    np.testing.assert_allclose(parent_link.frame_transform, np.eye(4))
+    # Root link frame should match the CAD API part world transform
+    # (unified handling with child links - no special rotation correction)
+    np.testing.assert_allclose(parent_link.frame_transform, T_WP_parent, atol=1e-7)
 
     # Child link frame_transform should be T_WJ = T_WP_parent @ T_PJ
     T_WJ = T_WP_parent @ T_PJ
-    np.testing.assert_allclose(child_link.frame_transform, T_WJ)
+    np.testing.assert_allclose(child_link.frame_transform, T_WJ, atol=1e-7)
 
-    # - JointRecord.origin is correctly calculated (parent frame to joint frame).
+    # Joint origin should be inv(parent_frame) @ child_frame
     edges = list(robot.edges(data=True))
     assert len(edges) == 1
     joint_rec = edges[0][2]["joint"]
 
-    # Joint origin translation should be [0.1, 1.0, 0.0]
-    expected_xyz = np.array([0.1, 1.0, 0.0])
-    np.testing.assert_allclose(joint_rec.origin.xyz, expected_xyz)
-    np.testing.assert_allclose(joint_rec.origin.rpy, [0.0, 0.0, 0.0], atol=1e-7)
+    # With unified root/child handling:
+    # expected_origin = inv(T_WP_parent) @ T_WJ
+    expected_origin = np.linalg.inv(T_WP_parent) @ T_WJ
+
+    # Construct actual matrix from Origin object
+    from scipy.spatial.transform import Rotation
+
+    actual_matrix = np.eye(4)
+    actual_matrix[:3, 3] = joint_rec.origin.xyz
+    r = Rotation.from_euler("xyz", joint_rec.origin.rpy)
+    actual_matrix[:3, :3] = r.as_matrix()
+
+    np.testing.assert_allclose(actual_matrix, expected_origin, atol=1e-7)

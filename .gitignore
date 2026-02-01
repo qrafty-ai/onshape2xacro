@@ -27,5 +27,5 @@ output_test/
 sample_xacros/
 test_tyro.py
 assembly_check.png
-waist/
-waist_xacro/
+waist*/
+openarm_left*/

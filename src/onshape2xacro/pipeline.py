@@ -34,43 +34,33 @@ def _fixed_occurrence_tf(self):
 setattr(Occurrence, "tf", property(_fixed_occurrence_tf))
 
 
+def _setup_credentials():
+    access_key, secret_key = get_credentials()
+    if access_key and secret_key:
+        os.environ["ONSHAPE_ACCESS_KEY"] = access_key
+        os.environ["ONSHAPE_SECRET_KEY"] = secret_key
+    return access_key, secret_key
+
+
 def _get_client_and_cad(url: str, max_depth: int) -> tuple[Client, CAD]:
     """Setup client and fetch CAD assembly."""
-    access_key, secret_key = get_credentials()
-
-    if not access_key or not secret_key:
+    if not _setup_credentials()[0]:
         raise ValueError(
             "Onshape credentials not found. Either:\n"
             "  1. Set ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY environment variables, or\n"
             "  2. Run 'onshape2xacro auth login' to store credentials in system keyring"
         )
 
-    # Set env vars for the toolkit's Client which reads from os.environ
-    os.environ["ONSHAPE_ACCESS_KEY"] = access_key
-    os.environ["ONSHAPE_SECRET_KEY"] = secret_key
-
-    client = Client(
-        env=None,
-        base_url="https://cad.onshape.com",
-    )
-
+    client = Client(env=None, base_url="https://cad.onshape.com")
     print(f"Fetching assembly from {url}...")
     cad = CAD.from_url(url, client=client, max_depth=max_depth)
     return client, cad
 
 
 def _try_get_client() -> Client | None:
-    access_key, secret_key = get_credentials()
-    if not access_key or not secret_key:
-        return None
-
-    os.environ["ONSHAPE_ACCESS_KEY"] = access_key
-    os.environ["ONSHAPE_SECRET_KEY"] = secret_key
-
-    return Client(
-        env=None,
-        base_url="https://cad.onshape.com",
-    )
+    if _setup_credentials()[0]:
+        return Client(env=None, base_url="https://cad.onshape.com")
+    return None
 
 
 def run_export(config: ExportConfig):
@@ -83,13 +73,25 @@ def run_export(config: ExportConfig):
         print(f"Loading pre-fetched CAD data from {url_path}...")
         with open(url_path / "cad.pickle", "rb") as f:
             cad = pickle.load(f)
-        client = _try_get_client()
+
+        # In pre-fetched mode, we stay local unless assembly.step is missing.
         if (url_path / "assembly.step").exists():
             asset_path = url_path / "assembly.step"
+            client = None
         elif (url_path / "assembly.zip").exists():
             asset_path = url_path / "assembly.zip"
+            client = None
         else:
             asset_path = None
+            client = _try_get_client()
+            if client:
+                print(
+                    "Warning: 'assembly.step' not found in local directory. Will attempt to download using API."
+                )
+            else:
+                print(
+                    "Warning: 'assembly.step' not found in local directory and no API credentials found."
+                )
         if bom_path is None and (url_path / "bom.csv").exists():
             bom_path = url_path / "bom.csv"
     else:

@@ -1,6 +1,4 @@
-import io
 import re
-import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -116,66 +114,6 @@ def _read_file_header(path: Path, max_bytes: int = 512) -> bytes:
         return handle.read(max_bytes)
 
 
-def _export_name_from_instance_name(instance_name: str) -> str:
-    match = INSTANCE_SUFFIX_REGEX.match(instance_name or "")
-    if not match:
-        return instance_name
-    base = match.group("base")
-    index = int(match.group("index"))
-    if index <= 1:
-        return base
-    return f"{base} ({index - 1})"
-
-
-def _map_keys_to_export_names(cad: Any) -> Dict[Any, str]:
-    """Map CAD part keys to their expected export names in Onshape STEP.
-
-    Onshape STEP export names instances as:
-    - BaseName (if index 1 or no index)
-    - BaseName (1) (if index 2)
-    - BaseName (2) (if index 3)
-    ...
-    Even if there are gaps in indices (e.g. <1>, <3>), they are assigned
-    sequential names based on their sorted order.
-    """
-    groups: Dict[str, List[Tuple[int, Any]]] = {}
-    for key in cad.parts:
-        instance = cad.instances.get(key)
-        if not instance:
-            continue
-        name = instance.name
-        match = INSTANCE_SUFFIX_REGEX.match(name)
-        if match:
-            base = match.group("base")
-            index = int(match.group("index"))
-        else:
-            base = name
-            index = 0
-        if base not in groups:
-            groups[base] = []
-        groups[base].append((index, key))
-
-    mapping = {}
-    for base, items in groups.items():
-        # Sort by index, then by key as tie-breaker
-        items.sort(key=lambda x: (x[0], str(x[1])))
-        for i, (_, key) in enumerate(items):
-            if i == 0:
-                mapping[key] = base
-            else:
-                mapping[key] = f"{base} ({i})"
-    return mapping
-
-
-def _export_name_from_filename(filename: str) -> str:
-    name = re.sub(r"^.* - ", "", filename)
-    if name.lower().endswith(".step"):
-        name = name[:-5]
-    elif name.lower().endswith(".stp"):
-        name = name[:-4]
-    return name
-
-
 def _matrix_to_trsf(matrix: np.ndarray) -> gp_Trsf:
     from scipy.spatial.transform import Rotation
 
@@ -199,10 +137,6 @@ def _matrix_to_trsf(matrix: np.ndarray) -> gp_Trsf:
         matrix[2][3],
     )
     return trsf
-
-
-def _matrix_to_loc(matrix: np.ndarray) -> TopLoc_Location:
-    return TopLoc_Location(_matrix_to_trsf(matrix))
 
 
 def _get_label_location(shape_tool: Any, label: TDF_Label) -> TopLoc_Location:
@@ -236,22 +170,6 @@ def _combine_locations(
         except Exception:
             pass
     return local_loc
-
-
-def _relative_location(
-    part_loc: TopLoc_Location, link_loc: TopLoc_Location
-) -> TopLoc_Location:
-    if hasattr(link_loc, "Inverted"):
-        try:
-            inv = link_loc.Inverted()
-            if hasattr(inv, "Multiplied"):
-                return inv.Multiplied(part_loc)
-            if hasattr(inv, "Multiply"):
-                inv.Multiply(part_loc)
-                return inv
-        except Exception:
-            pass
-    return part_loc
 
 
 def _iter_components(shape_tool: Any, label: TDF_Label) -> Iterable[TDF_Label]:
@@ -371,142 +289,23 @@ def _get_free_shape_labels(shape_tool: Any) -> TDF_LabelSequence:
     return labels
 
 
-def _get_shape(shape_tool: Any, label: TDF_Label):
-    get_shape = getattr(shape_tool, "GetShape_s", None)
-    if not callable(get_shape):
-        get_shape = getattr(shape_tool, "GetShape", None)
-    if not callable(get_shape):
-        raise RuntimeError("ShapeTool missing GetShape method")
-    return get_shape(label)
-
-
-def _load_step_shapes(step_path: Path) -> list[Any]:
-    doc = TDocStd_Document(TCollection_ExtendedString("step"))
-    reader = STEPCAFControl_Reader()
-    reader.SetNameMode(True)
-
-    status = reader.ReadFile(str(step_path))
-    if status != IFSelect_RetDone:
-        raise RuntimeError(f"STEP read failed: {status}")
-
-    reader.Transfer(doc)
-    shape_tool = _get_shape_tool(doc)
-    labels = _get_free_shape_labels(shape_tool)
-
-    shapes = []
-    for i in range(labels.Length()):
-        label = labels.Value(i + 1)
-        shape = cast(Any, _get_shape(shape_tool, label))
-        if not shape.IsNull():
-            shapes.append(shape)
-    return shapes
-
-
-def _load_step_shapes_from_zip(zip_path: Path) -> Dict[str, Any]:
-    shapes_by_name: Dict[str, Any] = {}
-    with zipfile.ZipFile(zip_path) as archive:
-        step_names = [
-            name
-            for name in archive.namelist()
-            if name.lower().endswith(".step") or name.lower().endswith(".stp")
-        ]
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            for name in step_names:
-                export_name = _export_name_from_filename(name)
-                if export_name in shapes_by_name:
-                    raise RuntimeError(f"Duplicate STEP export name: {export_name}")
-
-                step_path = tmp_path / Path(name).name
-                step_path.write_bytes(archive.read(name))
-                shapes = _load_step_shapes(step_path)
-
-                compound = TopoDS_Compound()
-                builder = BRep_Builder()
-                builder.MakeCompound(compound)
-                for shape in shapes:
-                    builder.Add(compound, shape)
-                shapes_by_name[export_name] = compound
-
-    return shapes_by_name
-
-
 def _part_world_matrix(part: Any) -> np.ndarray:
     part_tf = getattr(part, "worldToPartTF", None)
     if part_tf is None:
         return np.eye(4)
     tf_value = getattr(part_tf, "to_tf", None)
+    mat = np.eye(4)
     if callable(tf_value):
-        return cast(np.ndarray, tf_value())
-    if tf_value is not None:
-        return cast(np.ndarray, tf_value)
-    return np.eye(4)
-
-
-def split_step_to_meshes(
-    step_path: Path, link_groups: Dict[str, list[str]], mesh_dir: Path
-) -> Dict[str, str]:
-    doc = TDocStd_Document(TCollection_ExtendedString("step"))
-    reader = STEPCAFControl_Reader()
-    reader.SetNameMode(True)
-
-    status = reader.ReadFile(str(step_path))
-    if status != IFSelect_RetDone:
-        raise RuntimeError(f"STEP read failed: {status}")
-
-    reader.Transfer(doc)
-    shape_tool = _get_shape_tool(doc)
-
-    labels = TDF_LabelSequence()
-    get_free_shapes = getattr(shape_tool, "GetFreeShapes", None)
-    if not callable(get_free_shapes):
-        get_free_shapes = getattr(shape_tool, "GetFreeShapes_s", None)
-    if not callable(get_free_shapes):
-        raise RuntimeError("ShapeTool missing GetFreeShapes method")
-    get_free_shapes(labels)
-
-    part_shapes: Dict[str, Any] = {}
-    part_locations: Dict[str, TopLoc_Location] = {}
-
-    for i in range(labels.Length()):
-        label = labels.Value(i + 1)
-        _collect_shapes(
-            shape_tool, label, TopLoc_Location(), part_shapes, part_locations
-        )
-
-    if not part_shapes:
-        raise RuntimeError("No shapes found in STEP file")
-
-    mesh_dir.mkdir(parents=True, exist_ok=True)
-    stl_writer = StlAPI_Writer()
-    mesh_map: Dict[str, str] = {}
-
-    for link_name, part_ids in link_groups.items():
-        if not part_ids:
-            continue
-
-        link_loc = part_locations.get(part_ids[0], TopLoc_Location())
-        compound = TopoDS_Compound()
-        builder = BRep_Builder()
-        builder.MakeCompound(compound)
-
-        for part_id in part_ids:
-            shapes = part_shapes.get(part_id)
-            if not shapes:
-                raise RuntimeError(f"Missing part id in STEP: {part_id}")
-
-            locs = part_locations.get(part_id, [TopLoc_Location()])
-            # Add all occurrences of this part ID
-            for shape, part_loc in zip(shapes, locs):
-                rel_loc = _relative_location(part_loc, link_loc)
-                builder.Add(compound, shape.Located(rel_loc))
-
-        BRepMesh_IncrementalMesh(compound, 0.01)
-        out_path = mesh_dir / f"{link_name}.stl"
-        stl_writer.Write(compound, str(out_path))
-        mesh_map[link_name] = out_path.name
-
-    return mesh_map
+        mat = cast(np.ndarray, tf_value())
+    elif tf_value is not None:
+        mat = cast(np.ndarray, tf_value)
+    else:
+        return np.eye(4)
+    if not np.allclose(mat[3, :], [0, 0, 0, 1]) and np.allclose(
+        mat[:, 3], [0, 0, 0, 1]
+    ):
+        return mat.T
+    return mat
 
 
 class StepMeshExporter:
@@ -573,25 +372,8 @@ class StepMeshExporter:
             raise RuntimeError("No external data ids returned for STEP translation")
 
         def _extract_step_from_content(raw: bytes) -> bytes | None:
-            content = raw
-            if zipfile.is_zipfile(io.BytesIO(content)):
-                with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                    step_files = [
-                        n
-                        for n in zf.namelist()
-                        if n.lower().endswith((".step", ".stp"))
-                    ]
-                    if step_files:
-                        step_files.sort(
-                            key=lambda x: (
-                                x.lower() != "assembly.step",
-                                x.lower() != "assembly.stp",
-                                x,
-                            )
-                        )
-                        return zf.read(step_files[0])
-            if content.strip().startswith(b"ISO-10303-21"):
-                return content
+            if raw.lstrip().startswith(b"ISO-10303-21"):
+                return raw
             return None
 
         found_step = False
@@ -612,7 +394,6 @@ class StepMeshExporter:
                 found_step = True
                 break
 
-            # 3. If it's XML, it might be a manifest; continue to next external_id
             if content.strip().startswith(b"<?xml") or content.strip().startswith(
                 b"<manifest"
             ):
@@ -687,226 +468,33 @@ class StepMeshExporter:
             asset_path = self.asset_path
         else:
             asset_path = mesh_dir / "assembly.step"
-            self.export_step(asset_path)
+            if not asset_path.exists():
+                self.export_step(asset_path)
 
         if asset_path.suffix.lower() != ".zip":
             header = _read_file_header(asset_path)
             if not _is_step_payload(header) and not zipfile.is_zipfile(asset_path):
-                if self.client is None:
-                    raise RuntimeError(
-                        f"Invalid STEP file: {asset_path} (re-export requires client)"
-                    )
-                asset_path = mesh_dir / "assembly.step"
-                self.export_step(asset_path)
+                raise RuntimeError(
+                    f"Invalid STEP file: {asset_path}. Please delete it and re-export."
+                )
 
-        if asset_path.suffix.lower() == ".zip":
-            # For backward compatibility if 'asset_path' ends in '.zip'
-            shapes_by_name = _load_step_shapes_from_zip(asset_path)
-            export_name_by_key = _map_keys_to_export_names(self.cad)
-
-            stl_writer = StlAPI_Writer()
-            mesh_map: Dict[str, str | Dict[str, str]] = {}
-            missing_meshes: Dict[str, List[Dict[str, str]]] = {}
-
-            for link_name, link in link_records.items():
-                keys = link.keys
-                if not keys:
-                    continue
-
-                valid_keys = [
-                    k
-                    for k in keys
-                    if self.cad.parts.get(k)
-                    and not getattr(self.cad.parts[k], "isRigidAssembly", False)
-                ]
-                if not valid_keys:
-                    continue
-
-                link_world = getattr(link, "frame_transform", None)
-                if link_world is None:
-                    ref_key = valid_keys[0]
-                    link_world = _part_world_matrix(self.cad.parts[ref_key])
-
-                link_world_inv = np.linalg.inv(link_world)
-
-                compound = TopoDS_Compound()
-                builder = BRep_Builder()
-                builder.MakeCompound(compound)
-                link_missing_parts: List[Dict[str, str]] = []
-                has_valid_shapes = False
-                part_metadata_list: List[Dict[str, str]] = []
-
-                part_names_list = getattr(link, "part_names", [])
-
-                for idx, key in enumerate(keys):
-                    part = self.cad.parts.get(key)
-                    if part is None or getattr(part, "isRigidAssembly", False):
-                        continue
-
-                    export_name = export_name_by_key.get(key)
-                    shape = shapes_by_name.get(export_name) if export_name else None
-
-                    if shape is None:
-                        link_missing_parts.append(
-                            {
-                                "part_id": getattr(part, "partId", str(key)),
-                                "export_name": export_name or "unknown",
-                                "part_name": getattr(part, "name", "unknown"),
-                                "reason": f"STEP file '{export_name}' not found in zip"
-                                if export_name
-                                else "no export name mapping",
-                            }
-                        )
-                        continue
-
-                    part_world = _part_world_matrix(part)
-                    link_from_part = link_world_inv @ part_world
-                    trsf = _matrix_to_trsf(link_from_part)
-                    transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
-                    builder.Add(compound, transformed)
-                    has_valid_shapes = True
-
-                    part_name_from_list = (
-                        part_names_list[idx] if idx < len(part_names_list) else None
-                    )
-                    part_metadata_list.append(
-                        {
-                            "part_id": getattr(part, "partId", str(key)),
-                            "part_name": part_name_from_list or str(key),
-                        }
-                    )
-
-                if link_missing_parts:
-                    missing_meshes[link_name] = link_missing_parts
-
-                if has_valid_shapes:
-                    BRepMesh_IncrementalMesh(compound, self.deflection)
-
-                    # Generate intermediate high-res STL
-                    temp_stl = mesh_dir / f"{link_name}_raw.stl"
-                    stl_writer.Write(compound, str(temp_stl))
-
-                    # Compute Inertia if requested
-                    if report is not None and calc is not None:
-                        try:
-                            temp_step_inertia = mesh_dir / f"{link_name}_inertia.step"
-                            step_writer = STEPControl_Writer()
-                            step_writer.Transfer(compound, STEPControl_AsIs)
-                            step_writer.Write(str(temp_step_inertia))
-
-                            props = calc.compute_from_step_with_bom(
-                                temp_step_inertia,
-                                bom_entries,
-                                link_name,
-                                report,
-                                part_metadata=part_metadata_list,
-                            )
-
-                            if props:
-                                report.link_properties[link_name] = props
-                                logger.info(
-                                    f"Computed inertia for {link_name}: mass={props.mass:.4f} kg"
-                                )
-
-                            if temp_step_inertia.exists():
-                                temp_step_inertia.unlink()
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to compute inertia for {link_name}: {e}"
-                            )
-
-                # Process with trimesh and pymeshlab
-                try:
-                    # 1. Visual: GLB (using trimesh)
-                    try:
-                        # Load with force='mesh' to ensure we get a Trimesh object, not Scene
-                        mesh = trimesh.load(str(temp_stl), force="mesh")
-                        vis_filename = f"{link_name}.glb"
-                        vis_path = mesh_dir / vis_filename
-                        mesh.export(vis_path)
-                    except Exception as e:
-                        print(f"Error creating visual mesh for {link_name}: {e}")
-                        # Fallback for visual if trimesh fails? Just use STL or fail?
-                        # We'll rely on original STL if GLB fails, but maybe better to propagate error
-                        raise e
-
-                    # 2. Collision: Simplified (using pymeshlab)
-                    col_filename = f"{link_name}_collision.stl"
-                    col_path = mesh_dir / col_filename
-
-                    try:
-                        ms = pymeshlab.MeshSet()
-                        ms.load_new_mesh(str(temp_stl))
-
-                        # Generate Convex Hull
-                        ms.generate_convex_hull()
-
-                        # Simplify if needed (target 200 faces)
-                        # We use Quadric Edge Collapse Decimation
-                        # We check face count of current mesh (which is the hull)
-                        if ms.current_mesh().face_number() > 200:
-                            ms.meshing_decimation_quadric_edge_collapse(
-                                targetfacenum=200
-                            )
-
-                        ms.save_current_mesh(str(col_path))
-
-                        # Check file size constraint (<50KB)
-                        if col_path.stat().st_size > 50 * 1024:
-                            print(f"Warning: Collision mesh {col_filename} is > 50KB")
-
-                    except Exception as e:
-                        print(
-                            f"Error creating collision mesh for {link_name} with pymeshlab: {e}"
-                        )
-                        # Fallback: copy raw STL as collision
-                        # But raw STL might be huge.
-                        # If pymeshlab fails, we might just use the raw one or try trimesh logic as backup
-                        # For now, just copy raw
-                        import shutil
-
-                        shutil.copy(temp_stl, col_path)
-
-                    # Store both
-                    mesh_map[link_name] = {
-                        "visual": vis_filename,
-                        "collision": col_filename,
-                    }
-
-                    # Clean up temp
-                    temp_stl.unlink()
-
-                except Exception as e:
-                    print(f"Error processing mesh for {link_name}: {e}")
-                    # Fallback to original STL behavior if everything fails
-                    final_stl = mesh_dir / f"{link_name}.stl"
-                    if temp_stl.exists():
-                        temp_stl.rename(final_stl)
-                    mesh_map[link_name] = final_stl.name
-
-            return mesh_map, missing_meshes
-
-        # Primary logic for single STEP file
         doc = TDocStd_Document(TCollection_ExtendedString("step"))
         reader = STEPCAFControl_Reader()
         reader.SetNameMode(True)
         reader.SetPropsMode(True)
         reader.SetColorMode(True)
         reader.SetLayerMode(True)
-        if hasattr(reader, "SetMatMode"):
-            reader.SetMatMode(True)
-        if hasattr(reader, "SetViewMode"):
-            reader.SetViewMode(True)
-        if hasattr(reader, "SetGDTMode"):
-            reader.SetGDTMode(True)
-        if hasattr(reader, "SetSHUOMode"):
-            reader.SetSHUOMode(True)
+        for mode in ["SetMatMode", "SetViewMode", "SetGDTMode", "SetSHUOMode"]:
+            if hasattr(reader, mode):
+                getattr(reader, mode)(True)
+
         status = reader.ReadFile(str(asset_path))
         if status != IFSelect_RetDone:
             raise RuntimeError(f"STEP read failed with status {status}: {asset_path}")
 
         if not reader.Transfer(doc):
             raise RuntimeError("STEP transfer failed")
+
         shape_tool = _get_shape_tool(doc)
         labels = _get_free_shape_labels(shape_tool)
 
@@ -924,86 +512,19 @@ class StepMeshExporter:
         has_occurrence_ids = any(
             isinstance(key, tuple) and len(key) > 0 for key in part_shapes.keys()
         )
-        has_any_ids = any(
-            (isinstance(key, tuple) and len(key) > 0)
-            or (isinstance(key, str) and bool(key))
-            for key in part_shapes.keys()
-        )
 
-        part_id_counts: Dict[str, int] = {}
-        for part in self.cad.parts.values():
-            part_id = getattr(part, "partId", None)
-            if part_id is None:
-                continue
-            part_id_counts[part_id] = part_id_counts.get(part_id, 0) + 1
-        has_duplicate_part_ids = any(count > 1 for count in part_id_counts.values())
+        if not has_occurrence_ids:
+            part_counts: Dict[str, int] = {}
+            for part in self.cad.parts.values():
+                pid = getattr(part, "partId", None)
+                if pid:
+                    part_counts[pid] = part_counts.get(pid, 0) + 1
 
-        needs_reexport = (not has_any_ids) or (
-            not has_occurrence_ids and has_duplicate_part_ids
-        )
-
-        if needs_reexport:
-            # Re-export to ensure export IDs are embedded
-            asset_path = mesh_dir / "assembly.step"
-            try:
-                self.export_step(asset_path)
-            except Exception as exc:
-                if self.client is None:
-                    raise RuntimeError(
-                        "STEP file missing occurrence export IDs and no client available to re-export."
-                    ) from exc
-                raise
-
-            doc = TDocStd_Document(TCollection_ExtendedString("step"))
-            reader = STEPCAFControl_Reader()
-            reader.SetNameMode(True)
-            reader.SetPropsMode(True)
-            reader.SetColorMode(True)
-            reader.SetLayerMode(True)
-            if hasattr(reader, "SetMatMode"):
-                reader.SetMatMode(True)
-            if hasattr(reader, "SetViewMode"):
-                reader.SetViewMode(True)
-            if hasattr(reader, "SetGDTMode"):
-                reader.SetGDTMode(True)
-            if hasattr(reader, "SetSHUOMode"):
-                reader.SetSHUOMode(True)
-
-            status = reader.ReadFile(str(asset_path))
-            if status != IFSelect_RetDone:
+            if any(c > 1 for c in part_counts.values()):
                 raise RuntimeError(
-                    f"STEP read failed with status {status}: {asset_path}"
+                    f"STEP file '{asset_path.name}' is missing 'Occurrence Export IDs' required to disambiguate parts.\n"
+                    "Resolution: Delete the file to force a fresh export, or manually export with 'includeExportIds'."
                 )
-            if not reader.Transfer(doc):
-                raise RuntimeError("STEP transfer failed")
-            shape_tool = _get_shape_tool(doc)
-            labels = _get_free_shape_labels(shape_tool)
-            part_shapes.clear()
-            part_locations.clear()
-            for i in range(labels.Length()):
-                _collect_shapes(
-                    shape_tool,
-                    labels.Value(i + 1),
-                    TopLoc_Location(),
-                    part_shapes,
-                    part_locations,
-                )
-            has_occurrence_ids = any(
-                isinstance(key, tuple) and len(key) > 0 for key in part_shapes.keys()
-            )
-            has_any_ids = any(
-                (isinstance(key, tuple) and len(key) > 0)
-                or (isinstance(key, str) and bool(key))
-                for key in part_shapes.keys()
-            )
-            needs_reexport = (not has_any_ids) or (
-                not has_occurrence_ids and has_duplicate_part_ids
-            )
-
-        if needs_reexport:
-            raise RuntimeError(
-                "STEP file missing occurrence export IDs. Re-export with includeExportIds enabled."
-            )
 
         stl_writer = StlAPI_Writer()
         mesh_map: Dict[str, str | Dict[str, str]] = {}
@@ -1055,54 +576,24 @@ class StepMeshExporter:
             if not keys:
                 continue
 
-            used_indices: Dict[Any, int] = {}
+            # Use CAD-derived transforms (same as ZIP path) for consistency with joint origins.
+            # The STEP shapes are in local part coordinates, so we use CAD API transforms
+            # to place them relative to the link frame.
+            valid_keys = [
+                k
+                for k in keys
+                if self.cad.parts.get(k)
+                and not getattr(self.cad.parts[k], "isRigidAssembly", False)
+            ]
+            if not valid_keys:
+                continue
 
-            # Link frame transform (World to Link)
-            link_matrix = getattr(link, "frame_transform", None)
-            if link_matrix is not None:
-                # Scale translation from meters to millimeters to match STEP export
-                link_matrix = link_matrix.copy()
-                link_matrix[:3, 3] *= 1000.0
-                link_loc = TopLoc_Location(_matrix_to_trsf(link_matrix))
-            else:
-                # Fallback to first part's location from STEP
-                link_loc = None
-                for key in keys:
-                    part = self.cad.parts.get(key)
-                    if part is None or getattr(part, "isRigidAssembly", False):
-                        continue
+            link_world = getattr(link, "frame_transform", None)
 
-                    # Try occurrence path first
-                    part_path = getattr(key, "path", None)
-                    if part_path:
-                        part_path = tuple(part_path)
-                    if part_path in part_locations:
-                        link_loc = part_locations[part_path][0]
-                        break
-
-                    inst_name = _instance_leaf_name(key)
-                    if inst_name in part_locations:
-                        link_loc = part_locations[inst_name][0]
-                        break
-
-                    # Try name path from instances
-                    name_path = _name_path_for_key(key)
-                    if name_path in part_locations:
-                        link_loc = part_locations[name_path][0]
-                        break
-
-                    leaf_name = _normalized_leaf_name(name_path)
-                    if leaf_name in part_locations:
-                        link_loc = part_locations[leaf_name][0]
-                        break
-
-                    # Try part ID
-                    part_id = getattr(part, "partId", str(key))
-                    if part_id in part_locations:
-                        link_loc = part_locations[part_id][0]
-                        break
-                if link_loc is None:
-                    link_loc = TopLoc_Location()
+            # Scale CAD transform (meters) to STEP coordinate system (millimeters)
+            link_world_mm = link_world.copy()
+            link_world_mm[:3, 3] *= 1000.0
+            link_world_inv = np.linalg.inv(link_world_mm)
 
             compound = TopoDS_Compound()
             builder = BRep_Builder()
@@ -1112,50 +603,44 @@ class StepMeshExporter:
             part_metadata_list: List[Dict[str, str]] = []
 
             part_names_list = getattr(link, "part_names", [])
+            used_indices: Dict[Any, int] = {}
 
             for idx, key in enumerate(keys):
                 part = self.cad.parts.get(key)
                 if part is None or getattr(part, "isRigidAssembly", False):
                     continue
 
-                # Helper to pick shape and location from lists based on used indices
-                def _pick_match(match_key: Any):
+                def _pick_shape(match_key: Any):
                     shapes = part_shapes.get(match_key)
-                    locs = part_locations.get(match_key)
-                    if shapes and locs:
-                        idx = used_indices.get(match_key, 0)
-                        # If we have multiple occurrences, distribute them 1-to-1
-                        # If we run out, reuse the last one (better than missing)
-                        shape_idx = min(idx, len(shapes) - 1)
-                        used_indices[match_key] = idx + 1
-                        return shapes[shape_idx], locs[shape_idx]
-                    return None, None
+                    if shapes:
+                        shape_idx = used_indices.get(match_key, 0)
+                        shape_idx = min(shape_idx, len(shapes) - 1)
+                        used_indices[match_key] = shape_idx + 1
+                        return shapes[shape_idx]
+                    return None
 
-                # 1. Primary match: Occurrence Path (Tuple of IDs)
                 part_path = getattr(key, "path", None)
                 if part_path:
                     part_path = tuple(part_path)
-                shape, part_loc = _pick_match(part_path)
-                name_path = None
+                shape = _pick_shape(part_path)
 
-                if shape is None or part_loc is None:
+                if shape is None:
                     inst_name = _instance_leaf_name(key)
-                    shape, part_loc = _pick_match(inst_name)
+                    shape = _pick_shape(inst_name)
 
-                if shape is None or part_loc is None:
+                if shape is None:
                     name_path = _name_path_for_key(key)
-                    shape, part_loc = _pick_match(name_path)
+                    shape = _pick_shape(name_path)
 
-                if shape is None or part_loc is None:
+                if shape is None:
                     leaf_name = _normalized_leaf_name(name_path)
-                    shape, part_loc = _pick_match(leaf_name)
+                    shape = _pick_shape(leaf_name)
 
-                if shape is None or part_loc is None:
-                    # 2. Secondary match: Part Studio ID (String)
+                if shape is None:
                     part_id = getattr(part, "partId", str(key))
-                    shape, part_loc = _pick_match(part_id)
+                    shape = _pick_shape(part_id)
 
-                if shape is None or part_loc is None:
+                if shape is None:
                     link_missing_parts.append(
                         {
                             "part_id": getattr(part, "partId", str(key)),
@@ -1170,8 +655,13 @@ class StepMeshExporter:
                     )
                     continue
 
-                rel_loc = _relative_location(part_loc, link_loc)
-                builder.Add(compound, shape.Located(rel_loc))
+                part_world = _part_world_matrix(part)
+                part_world_mm = part_world.copy()
+                part_world_mm[:3, 3] *= 1000.0
+                link_from_part = link_world_inv @ part_world_mm
+                trsf = _matrix_to_trsf(link_from_part)
+                transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
+                builder.Add(compound, transformed)
                 has_valid_shapes = True
 
                 part_name_from_list = (

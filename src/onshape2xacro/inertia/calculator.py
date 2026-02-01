@@ -391,6 +391,7 @@ class InertiaCalculator:
             )
             part_meta.get("part_id") if part_meta else None
             part_name_full = part_meta.get("part_name") if part_meta else None
+            mesh_match = part_meta.get("mesh_match") if part_meta else None
 
             # Use part_name as the primary identifier (it contains the actual part name)
             # Extract the leaf name from the full path (e.g., "sub-asm-base_1_square_base_plate_1" -> "square_base_plate")
@@ -491,6 +492,7 @@ class InertiaCalculator:
                     part_bom_entry,
                     part_match_type,
                     part_bom_match_name,
+                    mesh_match,
                 )
             )
 
@@ -503,6 +505,7 @@ class InertiaCalculator:
             part_bom_entry,
             part_match_type,
             part_bom_match_name,
+            mesh_match,
         ) in enumerate(solid_props_list):
             if not part_id:
                 part_id = f"solid_{i}"
@@ -545,6 +548,7 @@ class InertiaCalculator:
                 ixx=final_props.ixx,
                 iyy=final_props.iyy,
                 izz=final_props.izz,
+                mesh_match=mesh_match,
                 warnings=part_warnings,
             )
             part_debug_infos.append(debug_info)
@@ -577,6 +581,7 @@ class InertiaCalculator:
             part_bom_entry,
             part_match_type,
             part_bom_match_name,
+            mesh_match,
         ) in enumerate(solid_props_list):
             if part_bom_entry and part_bom_entry.has_mass:
                 volume_m3 = volume_cm3 * 1e-6
