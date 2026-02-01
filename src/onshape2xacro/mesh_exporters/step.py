@@ -428,6 +428,7 @@ class StepMeshExporter:
         link_records: Dict[str, Any],
         mesh_dir: Path,
         bom_path: Optional[Path] = None,
+        visual_mesh_format: str = "obj",
     ) -> Tuple[
         Dict[str, str | Dict[str, str]],
         Dict[str, List[Dict[str, str]]],
@@ -448,6 +449,8 @@ class StepMeshExporter:
         )
 
         mesh_dir.mkdir(parents=True, exist_ok=True)
+        (mesh_dir / "visual").mkdir(parents=True, exist_ok=True)
+        (mesh_dir / "collision").mkdir(parents=True, exist_ok=True)
 
         report = None
         calc = None
@@ -714,22 +717,30 @@ class StepMeshExporter:
 
                 # Process with trimesh and pymeshlab
                 try:
-                    # 1. Visual: GLB (using trimesh)
+                    vis_filename = f"visual/{link_name}.{visual_mesh_format}"
+                    vis_path = mesh_dir / vis_filename
+
                     try:
-                        # Load with force='mesh' to ensure we get a Trimesh object, not Scene
-                        mesh = trimesh.load(str(temp_stl), force="mesh")
-                        vis_filename = f"{link_name}.glb"
-                        vis_path = mesh_dir / vis_filename
-                        mesh.export(vis_path)
+                        if visual_mesh_format == "stl":
+                            import shutil
+
+                            shutil.copy(temp_stl, vis_path)
+                        else:
+                            mesh = trimesh.load(str(temp_stl), force="mesh")
+
+                            if visual_mesh_format == "dae":
+                                mesh.export(vis_path, file_type="dae")
+                            elif visual_mesh_format == "obj":
+                                mesh.export(vis_path, file_type="obj")
+                            else:
+                                mesh.export(vis_path)
+
                     except Exception as e:
                         print(f"Error creating visual mesh for {link_name}: {e}")
-                        # Fallback to STL for visual if needed, or just warn
-                        # For now, we proceed. If GLB fails, Xacro might point to a missing file
-                        # unless we handle it. But let's assume it works or the collision handling covers it.
-                        pass
+                        raise e
 
                     # 2. Collision: Simplified (using pymeshlab)
-                    col_filename = f"{link_name}_collision.stl"
+                    col_filename = f"collision/{link_name}.stl"
                     col_path = mesh_dir / col_filename
 
                     try:
@@ -772,9 +783,9 @@ class StepMeshExporter:
                 except Exception as e:
                     print(f"Error processing mesh for {link_name}: {e}")
                     # Fallback to original STL behavior if trimesh/pymeshlab fails
-                    final_stl = mesh_dir / f"{link_name}.stl"
+                    final_stl = mesh_dir / "visual" / f"{link_name}.stl"
                     if temp_stl.exists():
                         temp_stl.rename(final_stl)
-                    mesh_map[link_name] = final_stl.name
+                    mesh_map[link_name] = f"visual/{final_stl.name}"
 
         return mesh_map, missing_meshes, report
