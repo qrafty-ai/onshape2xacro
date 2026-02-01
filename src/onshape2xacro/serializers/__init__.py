@@ -60,6 +60,7 @@ class XacroSerializer(RobotSerializer):
         download_assets: bool = True,
         mesh_dir: Optional[str] = None,
         bom_path: Optional[Path] = None,
+        visual_mesh_format: str = "obj",
         **options: Any,
     ):
         """Save robot to hierarchical xacro structure."""
@@ -97,7 +98,10 @@ class XacroSerializer(RobotSerializer):
             if (client and cad) or (cad and asset_path):
                 exporter = StepMeshExporter(client, cad, asset_path=asset_path)
                 mesh_map, missing_meshes, report = exporter.export_link_meshes(
-                    link_records, mesh_dir_path, bom_path=bom_path
+                    link_records,
+                    mesh_dir_path,
+                    bom_path=bom_path,
+                    visual_mesh_format=visual_mesh_format,
                 )
 
                 if report and report.link_properties:
@@ -667,7 +671,7 @@ class XacroSerializer(RobotSerializer):
             "3. Right-click and choose **Export...**",
             "4. Select **STL** format",
             "5. Save the file with the exact filename shown (e.g., `link_name.stl`)",
-            f"6. Place the exported STL file in: `{mesh_dir}`",
+            f"6. Place the exported STL file in: `{mesh_dir}/visual`",
             "",
             "---",
             "",
