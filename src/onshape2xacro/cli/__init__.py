@@ -1,6 +1,6 @@
 import importlib.metadata
 import sys
-from typing import Annotated, Union
+from typing import Annotated, Union, Literal
 from dataclasses import dataclass
 from pathlib import Path
 import tyro
@@ -22,6 +22,8 @@ class ExportConfig:
     """Path to BOM CSV file for density lookup."""
     max_depth: int = 5
     """Maximum subassembly traversal depth."""
+    visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
+    """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
 
 
 @dataclass

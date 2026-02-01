@@ -145,6 +145,7 @@ def run_export(config: ExportConfig):
         download_assets=True,
         config=override,
         bom_path=bom_path,
+        visual_mesh_format=config.visual_mesh_format,
     )
     print("Export complete!")
 
