@@ -129,11 +129,17 @@ class CondensedRobot(Robot):
         kinematic_graph,
         cad: CAD,
         name="robot",
+        mate_values: Optional[Dict[str, Any]] = None,
     ):
         """
         Create a condensed robot from a kinematic graph.
         Groups all nodes connected by non-joint edges into single links.
+
+        Args:
+            mate_values: Dictionary of mate values keyed by featureId.
         """
+        if mate_values is None:
+            mate_values = {}
 
         nodes = list(kinematic_graph.nodes)
         parent_map = {node: node for node in nodes}
@@ -232,6 +238,7 @@ class CondensedRobot(Robot):
 
             parent = None
             root_payload = node_payload(group_root)
+
             if root_payload is not None:
                 parent = getattr(root_payload, "parent", None)
             if parent is None and payloads:
@@ -271,6 +278,7 @@ class CondensedRobot(Robot):
             if p_link_name == c_link_name:
                 continue
 
+            # print(f"Edge {u}->{v} mapped to Link {p_link_name}->{c_link_name}")
             link_tree[p_link_name].append((c_link_name, mate))
             has_parent.add(c_link_name)
 
@@ -278,6 +286,7 @@ class CondensedRobot(Robot):
         roots = [name for name in link_to_rec if name not in has_parent]
         for root_name in roots:
             # Root link frame defaults to identity (Assembly origin)
+
             # Try to find representative part frame for root too
             root_link_frame = np.eye(4)
             if cad:
@@ -325,6 +334,7 @@ class CondensedRobot(Robot):
                         child_match = any(
                             occ_match(entity_occ, occ) for occ in child_occs
                         )
+
                         if parent_match and not child_match:
                             # Strongest candidate: in parent link but not in child link
                             parent_candidates.insert(0, (entity, entity_occ))
@@ -363,25 +373,71 @@ class CondensedRobot(Robot):
                 T_PJ = parent_entity.matedCS.to_tf
                 T_WJ = parent_part_world @ T_PJ
 
-                # =============================================================
-                # KINEMATIC CHAIN APPROACH:
-                # Child link frame = Joint world frame (T_WJ)
-                # This ensures joint origins form a proper kinematic chain:
-                #   joint_origin = inv(T_parent_link) @ T_WJ
-                # Meshes are "baked" into link frame by StepMeshExporter.
-                # =============================================================
+                # Compensation for Non-Zero Configuration:
+                # 1. Child link frame = Joint world frame (T_WJ) * Correction
+                # 2. Joint origin = inv(T_parent_link) @ T_WJ (always relative to zero pose)
+                #
+                # If the robot is in a non-zero configuration (angle theta), the mesh
+                # is "baked" at that angle. To fix this, we rotate the child link frame
+                # by theta.
+                # T_mesh_visual = inv(T_child_frame) @ T_part_world
+                #               = inv(T_WJ @ T_mate) @ (T_WJ @ T_mate @ T_part_local)
+                #               = inv(T_mate) @ inv(T_WJ) @ T_WJ @ T_mate @ T_part_local
+                #               = T_part_local (Canonical/Zero Pose)
 
                 mate_name = getattr(mate, "name", f"joint_{curr_name}_{next_name}")
-
-                # Child link frame IS the joint world frame
-                # This is kinematically correct: the child link origin is at the joint axis
-                T_target_child = T_WJ
-
-                # Joint origin = transform from parent link frame to joint world frame
-                T_origin_mat = np.linalg.inv(T_WC) @ T_WJ
-                joint_origin = Origin.from_matrix(T_origin_mat)
-
                 mate_type = getattr(mate, "mateType", "REVOLUTE")
+                mate_id = getattr(mate, "id", None)
+
+                # Calculate correction transform based on current mate values
+                T_mate_correction = np.eye(4)
+                if mate_id and mate_id in mate_values:
+                    values = mate_values[mate_id]
+
+                    # Determine correction sign based on whether the parent entity is the
+                    # first or second entity in the mate definition.
+                    # MatedEntities[0] is usually the "Child" (Moving) in Onshape UI context,
+                    # but mate values are relative.
+                    # If parent is MatedEntities[0], then Child is [1].
+                    # Value is [0] relative to [1] (or vice versa).
+                    # Standard assumption: Value is [0] relative to [1].
+                    # If Parent is [1] (Base), Child is [0] (Moving). Child = Parent @ Value. -> Positive
+                    # If Parent is [0] (Base), Child is [1] (Moving). Parent = Child @ Value -> Child = Parent @ inv(Value). -> Negative
+
+                    is_parent_first = parent_entity == mate.matedEntities[0]
+                    sign = -1.0 if is_parent_first else 1.0
+
+                    # Onshape mates align Z axis for primary motion
+                    if mate_type == "REVOLUTE":
+                        angle = values.get("rotationZ", 0.0) * sign
+                        if abs(angle) > 1e-6:
+                            c, s = np.cos(angle), np.sin(angle)
+                            T_mate_correction[:3, :3] = np.array(
+                                [[c, -s, 0], [s, c, 0], [0, 0, 1]]
+                            )
+                    elif mate_type == "PRISMATIC":
+                        dist = values.get("translationZ", 0.0) * sign
+                        if abs(dist) > 1e-6:
+                            T_mate_correction[2, 3] = dist
+                    elif mate_type == "CYLINDRICAL":
+                        angle = values.get("rotationZ", 0.0) * sign
+                        dist = values.get("translationZ", 0.0) * sign
+                        if abs(angle) > 1e-6:
+                            c, s = np.cos(angle), np.sin(angle)
+                            T_mate_correction[:3, :3] = np.array(
+                                [[c, -s, 0], [s, c, 0], [0, 0, 1]]
+                            )
+                        if abs(dist) > 1e-6:
+                            T_mate_correction[2, 3] = dist
+
+                # Child link frame adjusted for current mate value
+                T_target_child = T_WJ @ T_mate_correction
+
+                # Joint origin = transform from parent link frame to joint world frame (Zero Pose)
+                # We use T_WJ (which represents the joint frame at zero pose on the parent side)
+                T_origin_mat = np.linalg.inv(T_WC) @ T_WJ
+
+                joint_origin = Origin.from_matrix(T_origin_mat)
 
                 mate_limits = getattr(mate, "limits", None)
 

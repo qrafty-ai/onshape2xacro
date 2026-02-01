@@ -1,3 +1,4 @@
+import numpy as np
 from unittest.mock import MagicMock
 from onshape2xacro.condensed_robot import CondensedRobot, is_joint_mate
 
@@ -14,6 +15,27 @@ def test_is_joint_mate():
     assert is_joint_mate(make_mate("fixed")) is False
     assert is_joint_mate(make_mate("fastened")) is False
     assert is_joint_mate(make_mate("JOINT_upper")) is False  # case sensitive
+
+
+def create_mock_mate_with_entities(name, parent_node_occ, mate_type="REVOLUTE"):
+    m = MagicMock()
+    m.name = name
+    m.mateType = mate_type
+    m.limits = None
+    m.id = f"id_{name}"
+
+    # Entity matching parent
+    e1 = MagicMock()
+    e1.matedOccurrence = [parent_node_occ]
+    e1.matedCS.to_tf = np.eye(4)
+
+    # Entity matching child (generic)
+    e2 = MagicMock()
+    e2.matedOccurrence = ["some_child_occ"]
+    e2.matedCS.to_tf = np.eye(4)
+
+    m.matedEntities = [e1, e2]
+    return m
 
 
 def test_condensed_robot_from_graph_simple():
@@ -42,11 +64,17 @@ def test_condensed_robot_from_graph_simple():
         def __init__(self, u, v, name, mate_type="REVOLUTE"):
             self.u = u
             self.v = v
-            self.mate = MagicMock()
-            self.mate.name = name
-            self.mate.mateType = mate_type
-            # Mocking limits and other attributes if needed
-            self.mate.limits = None
+            if mate_type == "REVOLUTE":
+                # For joint, we need proper entities to match parent
+                # Here parent is B (for joint_1)
+                self.mate = create_mock_mate_with_entities(
+                    name, u.occurrence, mate_type
+                )
+            else:
+                self.mate = MagicMock()
+                self.mate.name = name
+                self.mate.mateType = mate_type
+                self.mate.limits = None
 
     edges = [
         MockEdge(node_a, node_b, "fixed_mate", "FASTENED"),
@@ -54,7 +82,10 @@ def test_condensed_robot_from_graph_simple():
     ]
     graph.edges = edges
 
-    robot = CondensedRobot.from_graph(graph, name="TestRobot")
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+
+    robot = CondensedRobot.from_graph(graph, cad=cad, name="TestRobot")
 
     # Check nodes in robot
     # robot should have 2 nodes now
@@ -65,7 +96,11 @@ def test_condensed_robot_from_graph_simple():
     # Another node should contain PartC
 
     link_names = [data["link"].name for _, data in nodes]
-    assert "parta_partb" in link_names or "partb_parta" in link_names
+    # Check that we have a link for the A-B group and a link for C
+    # Names are derived from heavy parts. PartA or PartB.
+    # sanitize_name("PartA") -> "parta"
+    group_name_found = "parta" in link_names or "partb" in link_names
+    assert group_name_found
     assert "partc" in link_names
 
     # Check edges in robot
@@ -98,7 +133,10 @@ def test_condensed_robot_name_collision():
     graph.nodes = [node1, node2]
     graph.edges = []
 
-    robot = CondensedRobot.from_graph(graph)
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+
+    robot = CondensedRobot.from_graph(graph, cad=cad)
     nodes = list(robot.nodes(data=True))
     assert len(nodes) == 2
     names = sorted([data["link"].name for _, data in nodes])
@@ -121,20 +159,26 @@ def test_condensed_robot_self_loop():
     graph.nodes = [node_a, node_b]
 
     class MockEdge:
-        def __init__(self, u, v, name):
+        def __init__(self, u, v, name, is_joint=False):
             self.u = u
             self.v = v
-            self.mate = MagicMock()
-            self.mate.name = name
-            self.mate.mateType = "REVOLUTE"
-            self.mate.limits = None
+            if is_joint:
+                self.mate = create_mock_mate_with_entities(name, u.occurrence)
+            else:
+                self.mate = MagicMock()
+                self.mate.name = name
+                self.mate.mateType = "FASTENED"
+                self.mate.limits = None
 
     graph.edges = [
-        MockEdge(node_a, node_b, "fixed_mate"),
-        MockEdge(node_a, node_b, "joint_1"),
+        MockEdge(node_a, node_b, "fixed_mate", is_joint=False),
+        MockEdge(node_a, node_b, "joint_1", is_joint=True),
     ]
 
-    robot = CondensedRobot.from_graph(graph)
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+
+    robot = CondensedRobot.from_graph(graph, cad=cad)
     assert len(list(robot.nodes)) == 1
     assert len(list(robot.edges)) == 0
 
@@ -143,9 +187,7 @@ def test_condensed_robot_networkx_style():
     # Test using a structure that mimics NetworkX
     class MockGraph:
         def __init__(self):
-            m = MagicMock()
-            m.name = "joint_1"
-            m.mateType = "REVOLUTE"
+            m = create_mock_mate_with_entities("joint_1", "o1")
             self.nodes = {
                 "n1": {"data": MagicMock(part_name="P1")},
                 "n2": {"data": MagicMock(part_name="P2")},
@@ -164,8 +206,110 @@ def test_condensed_robot_networkx_style():
     graph.nodes["n2"]["data"].part_id = "p2"
     graph.nodes["n2"]["data"].occurrence = "o2"
 
-    robot = CondensedRobot.from_graph(graph)
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+
+    robot = CondensedRobot.from_graph(graph, cad=cad)
     assert len(list(robot.nodes)) == 2
     assert len(list(robot.edges)) == 1
     edge_data = list(robot.edges(data=True))[0][2]
     assert edge_data["joint"].name == "joint_1"
+
+
+class SimpleMockNode:
+    def __init__(self, id, name, occurrence):
+        self.part_id = id
+        self.part_name = name
+        self.occurrence = occurrence
+
+    def __repr__(self):
+        return f"Node({self.part_name})"
+
+
+def test_condensed_robot_correction():
+    # A --(joint_1)--> B
+    # Joint 1 has value pi/2 (90 deg)
+    graph = MagicMock()
+
+    # Nodes
+    node_a = SimpleMockNode("A", "PartA", "occ_A")
+    node_b = SimpleMockNode("B", "PartB", "occ_B")
+
+    graph.nodes = [node_a, node_b]
+
+    # Edge
+    mate = MagicMock()
+    mate.name = "joint_1"
+    mate.mateType = "REVOLUTE"
+    mate.id = "feature_1"
+    mate.limits = None
+
+    # Mock mated entities for transform calculation
+    # Parent (A) is at origin. Joint is at (0,0,1).
+    # T_PJ (Parent -> Joint)
+    T_PJ = np.eye(4)
+    T_PJ[2, 3] = 1.0
+
+    # Mated Entity
+    entity_parent = MagicMock()
+    entity_parent.matedOccurrence = ["occ_A"]  # Belongs to parent
+    entity_parent.matedCS.to_tf = T_PJ
+
+    entity_child = MagicMock()
+    entity_child.matedOccurrence = ["occ_B"]  # Belongs to child
+
+    # Set parent as the SECOND entity (index 1) to simulate standard "Part to Base" mate
+    # where Base (Parent) is target (Index 1) and Part (Child) is Mover (Index 0).
+    # Child (0) = Parent (1) * Value. -> Positive sign.
+    mate.matedEntities = [entity_child, entity_parent]
+
+    class MockEdge:
+        def __init__(self, u, v, m):
+            self.u = u
+            self.v = v
+            self.mate = m
+
+    graph.edges = [MockEdge(node_a, node_b, mate)]
+
+    # CAD Mock
+    cad = MagicMock()
+    # Mock get_transform. Returns Identity for A and B.
+    cad.get_transform.return_value = np.eye(4)
+    cad.keys_by_id = {}  # Needed for resolution
+
+    # Mate Values: 90 degrees rotation around Z
+    mate_values = {"feature_1": {"rotationZ": np.pi / 2, "translationZ": 0.0}}
+
+    robot = CondensedRobot.from_graph(
+        graph, cad=cad, name="TestRobot", mate_values=mate_values
+    )
+
+    # Verify Child Link Frame (for Part B)
+    # T_WJ = T_A @ T_PJ = I @ T_PJ = T_PJ (0,0,1)
+    # Correction = RotZ(90)
+    # T_target = T_WJ @ Correction
+
+    # Find link name for B
+    links = {data["link"].name: data["link"] for _, data in robot.nodes(data=True)}
+    # Assuming PartA -> LinkA, PartB -> LinkB (names are sanitized part names)
+    link_b = None
+    for link in links.values():
+        if any("B" in pid for pid in link.part_ids):
+            link_b = link
+            break
+
+    assert link_b is not None
+
+    T_actual = link_b.frame_transform
+
+    # Expected:
+    # T_WJ: translation (0,0,1)
+    # Correction: Rotation 90 deg around Z
+    # Result: Translation (0,0,1), Rotation 90 deg Z
+
+    c, s = 0.0, 1.0  # cos(90)=0, sin(90)=1
+    T_expected = np.eye(4)
+    T_expected[:3, :3] = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    T_expected[2, 3] = 1.0
+
+    np.testing.assert_allclose(T_actual, T_expected, atol=1e-6)

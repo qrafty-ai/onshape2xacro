@@ -1,3 +1,4 @@
+from unittest.mock import MagicMock
 import pickle
 
 
@@ -39,6 +40,28 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
         "onshape2xacro.pipeline.CAD.from_url", lambda *args, **kwargs: mock_cad
     )
 
+    # Mock StepMeshExporter to avoid API calls
+    class MockExporter:
+        def __init__(self, client, cad):
+            pass
+
+        def export_step(self, path):
+            # Create dummy file
+            with open(path, "w") as f:
+                f.write("STEP DATA")
+
+    monkeypatch.setattr(
+        "onshape2xacro.mesh_exporters.step.StepMeshExporter", MockExporter
+    )
+
+    # Mock fetch_mate_values and save_mate_values
+
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.fetch_mate_values", lambda *args: {"mate1": {}}
+    )
+    mock_save = MagicMock()
+    monkeypatch.setattr("onshape2xacro.pipeline.save_mate_values", mock_save)
+
     # Set CLI arguments
     test_args = ["onshape2xacro", "fetch-cad", url, "--output", str(output_file)]
     monkeypatch.setattr("sys.argv", test_args)
@@ -47,11 +70,19 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     main()
 
     # Verify output
+    # output_file is a directory in this test context due to run_fetch_cad behavior
     assert output_file.exists()
-    with open(output_file, "rb") as f:
+    assert output_file.is_dir()
+
+    # Check cad.pickle inside
+    with open(output_file / "cad.pickle", "rb") as f:
         data = pickle.load(f)
 
     assert data.document_id == "123"
     assert data.element_id == "789"
     assert data.name == "test_robot"
     assert data.workspace_id == "456"
+
+    # Verify mate values saved
+    mock_save.assert_called_once()
+    assert (output_file / "mate_values.json").name == "mate_values.json"
