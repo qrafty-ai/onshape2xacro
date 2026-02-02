@@ -443,10 +443,22 @@ class InertiaCalculator:
 
             if not part_bom_entry and part_name_full:
                 # Try fuzzy match
-                for bom_name in bom_entries:
+                normalized_full = normalize_name(part_name_full)
+                # Sort BOM entries by length (descending) to match longest names first
+                # This prevents "screw M4" from matching "screw M4x10" if both exist (though unlikely with normalize)
+                # But more importantly, avoids short random matches
+                sorted_bom_names = sorted(bom_entries.keys(), key=len, reverse=True)
+
+                for bom_name in sorted_bom_names:
+                    normalized_bom = normalize_name(bom_name)
+                    # Skip very short matches to avoid false positives (e.g. "a", "b", "no")
+                    # But allow "4310", "J1_A" (length 4)
+                    if len(normalized_bom) < 3:
+                        continue
+
                     if (
-                        bom_name.lower() in part_name_full.lower()
-                        or part_name_full.lower() in bom_name.lower()
+                        normalized_bom in normalized_full
+                        or normalized_full in normalized_bom
                     ):
                         part_bom_entry = bom_entries[bom_name]
                         part_match_type = "fuzzy"
@@ -454,9 +466,13 @@ class InertiaCalculator:
                         break
                     if part_bom_entry:
                         break
+                    if part_bom_entry:
+                        break
 
             # Determine which density to use (prefer part-specific BOM, fallback to link-level)
-            effective_bom = part_bom_entry or bom_entry
+            # CRITICAL FIX: Do NOT use bom_entry (link-level) as fallback for mass calculation.
+            # If a screw is unmatched, it should NOT inherit the mass of the entire base plate.
+            effective_bom = part_bom_entry
 
             # Priority 1: If BOM has mass, use mass/volume to get effective density
             if effective_bom and effective_bom.has_mass:
@@ -476,7 +492,13 @@ class InertiaCalculator:
                 density = self._get_density(material)
                 if density is None:
                     density = self.default_density
-            # Priority 3: No BOM data, use default
+            # Priority 3: Fallback to link-level material (but NEVER link-level mass)
+            elif bom_entry and bom_entry.has_material:
+                material = bom_entry.material
+                density = self._get_density(material)
+                if density is None:
+                    density = self.default_density
+            # Priority 4: No BOM data, use default
             else:
                 material = None
                 density = self.default_density
@@ -489,7 +511,7 @@ class InertiaCalculator:
                     material,
                     part_id,
                     part_name_full,
-                    part_bom_entry,
+                    part_bom_entry,  # Store original part_bom_entry, not effective_bom
                     part_match_type,
                     part_bom_match_name,
                     mesh_match,
@@ -594,8 +616,15 @@ class InertiaCalculator:
                     solids[i], effective_density
                 )
             elif part_bom_entry and part_bom_entry.has_material:
-                final_props = props
+                # Recalculate using material density (in case it wasn't used in pass 1)
+                mat_density = (
+                    self._get_density(part_bom_entry.material) or self.default_density
+                )
+                final_props = self._compute_solid_properties(solids[i], mat_density)
             else:
+                # If no specific part match, we MUST NOT use the link-level 'effective_bom'
+                # because that assigns the mass of the entire assembly to each unmatched screw.
+                # Just use default density or whatever was computed in pass 1 (which used default if no part match)
                 final_props = props
 
             shifted_props = self._apply_parallel_axis_theorem(final_props, com)

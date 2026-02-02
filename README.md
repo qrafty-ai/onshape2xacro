@@ -78,6 +78,8 @@ The export workflow is broken down into modular steps to give you full control o
 
     The inertia calculation assumes that the part's mass is uniformly distributed (which is true for metals but not the case for 3D-printed parts).
 
+    To debug the inertial calculation, inspect the generated `inertia_debug.md` file in the output directory and compare with [calculated values](https://cad.onshape.com/help/Content/massprops-asmb.htm?cshid=massprops_assembly) from onshape.
+
 ## Limitation
 
 ### Requires zeroing robot pose before export
