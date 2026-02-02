@@ -30,6 +30,7 @@ class JointRecord:
     joint_type: str
     parent: str  # link name
     child: str  # link name
+    axis: Tuple[float, float, float]
     limits: Any = None
     mate: Any = None
     origin: Optional[Origin] = None
@@ -145,6 +146,13 @@ class CondensedRobot(Robot):
         """
         if mate_values is None:
             mate_values = {}
+
+        # Build lookup for original mate entities to determine joint direction
+        mate_id_to_orig = {}
+        if hasattr(cad, "mates") and cad.mates:
+            for (asm_key, k1, k2), m in cad.mates.items():
+                if m.id:
+                    mate_id_to_orig[m.id] = (k1, k2)
 
         nodes = list(kinematic_graph.nodes)
         parent_map = {node: node for node in nodes}
@@ -294,25 +302,28 @@ class CondensedRobot(Robot):
 
             # Try to find representative part frame for root too
             root_link_frame = np.eye(4)
-            if cad:
-                link_rec = link_to_rec[root_name]
-                for _, occ in zip(link_rec.keys, link_rec.occurrences):
-                    found = False
+            link_rec = link_to_rec[root_name]
+            for _, occ in zip(link_rec.keys, link_rec.occurrences):
+                found = False
 
-                    tf = cad.get_transform(occ)
-                    if tf is not None:
-                        if not np.allclose(tf[3, :], [0, 0, 0, 1]) and np.allclose(
-                            tf[:, 3], [0, 0, 0, 1]
-                        ):
-                            tf = tf.T
-                        root_link_frame, found = tf, True
+                tf = cad.get_transform(occ)
+                if tf is not None:
+                    if not np.allclose(tf[3, :], [0, 0, 0, 1]) and np.allclose(
+                        tf[:, 3], [0, 0, 0, 1]
+                    ):
+                        tf = tf.T
+                    root_link_frame, found = tf, True
 
-                    if found:
-                        break
+                if found:
+                    break
             link_to_rec[root_name].frame_transform = root_link_frame
 
         queue = list(roots)
         visited = set(roots)
+        if len(queue) > 1:
+            raise RuntimeError(
+                f"Multiple root links found: {roots}. Robot must have a single root."
+            )
         while queue:
             curr_name = queue.pop(0)
             curr_link = link_to_rec[curr_name]
@@ -322,9 +333,9 @@ class CondensedRobot(Robot):
                 if next_name in visited:
                     continue
 
-                mate_name = getattr(mate, "name", f"joint_{curr_name}_{next_name}")
-                mate_type = getattr(mate, "mateType", "REVOLUTE")
-                mate_id = getattr(mate, "id", None)
+                mate_name = mate.name
+                mate_type = mate.mateType
+                mate_id = mate.id
 
                 # Calculate World transform of joint (mate connector)
                 # Choose the mate entity that belongs to the current (parent) link's occurrences
@@ -414,44 +425,65 @@ class CondensedRobot(Robot):
 
                 # Calculate correction transform based on current mate values
                 T_mate_correction = np.eye(4)
+
+                # Determine correction sign based on whether the parent entity is the
+                # first or second entity in the mate definition.
+
                 if mate_id and mate_id in mate_values:
                     values = mate_values[mate_id]
-                    if values is not None:
-                        # Determine correction sign based on whether the parent entity is the
-                        # first or second entity in the mate definition.
-                        # MatedEntities[0] is usually the "Child" (Moving) in Onshape UI context,
-                        # but mate values are relative.
-                        # If parent is MatedEntities[0], then Child is [1].
-                        # Value is [0] relative to [1] (or vice versa).
-                        # Standard assumption: Value is [0] relative to [1].
-                        # If Parent is [1] (Base), Child is [0] (Moving). Child = Parent @ Value. -> Positive
-                        # If Parent is [0] (Base), Child is [1] (Moving). Parent = Child @ Value -> Child = Parent @ inv(Value). -> Negative
+                    if values is None:
+                        raise RuntimeError(f"Mate values for mate ID {mate_id} is None")
+                    # Onshape mates align Z axis for primary motion
+                    if mate_type == "REVOLUTE":
+                        # Default to -1.0 if we can't determine direction
+                        sign = -1.0
 
-                        is_parent_first = parent_entity == mate.matedEntities[0]
-                        sign = -1.0 if is_parent_first else 1.0
+                        if mate_id in mate_id_to_orig:
+                            k0, k1 = mate_id_to_orig[mate_id]
+                            # Check if parent matches Original Entity 1 (Fixed/Base) -> Sign +1
+                            # Check if parent matches Original Entity 0 (Mover) -> Sign -1
 
-                        # Onshape mates align Z axis for primary motion
-                        if mate_type == "REVOLUTE":
-                            angle = values.get("rotationZ", 0.0) * sign
-                            if abs(angle) > 1e-6:
-                                c, s = np.cos(angle), np.sin(angle)
-                                T_mate_correction[:3, :3] = np.array(
-                                    [[c, -s, 0], [s, c, 0], [0, 0, 1]]
-                                )
-                        elif mate_type == "PRISMATIC":
-                            dist = values.get("translationZ", 0.0) * sign
-                            if abs(dist) > 1e-6:
-                                T_mate_correction[2, 3] = dist
-                        elif mate_type == "CYLINDRICAL":
-                            angle = values.get("rotationZ", 0.0) * sign
-                            dist = values.get("translationZ", 0.0) * sign
-                            if abs(angle) > 1e-6:
-                                c, s = np.cos(angle), np.sin(angle)
-                                T_mate_correction[:3, :3] = np.array(
-                                    [[c, -s, 0], [s, c, 0], [0, 0, 1]]
-                                )
-                            if abs(dist) > 1e-6:
-                                T_mate_correction[2, 3] = dist
+                            def _get_root(k):
+                                if hasattr(cad, "parts") and k in cad.parts:
+                                    p = cad.parts[k]
+                                    if getattr(p, "rigidAssemblyKey", None):
+                                        return p.rigidAssemblyKey
+                                return k
+
+                            r0 = _get_root(k0)
+                            r1 = _get_root(k1)
+
+                            if parent_key == r1:
+                                sign = -1.0
+                            elif parent_key == r0:
+                                sign = 1.0
+
+                        axis = (0.0, 0.0, sign)
+                        angle = values.get("rotationZ", 0.0) * sign
+                        print(f"Joint {mate_name} axis set to {axis}")
+                        # import ipdb
+
+                        # ipdb.set_trace()
+                        if abs(angle) > 1e-6:
+                            c, s = np.cos(angle), np.sin(angle)
+                            T_mate_correction[:3, :3] = np.array(
+                                [[c, -s, 0], [s, c, 0], [0, 0, 1]]
+                            )
+                    elif mate_type == "PRISMATIC":
+                        raise NotImplementedError(
+                            "PRISMATIC mates not yet implemented."
+                        )
+                        # dist = values.get("translationZ", 0.0) * sign
+                        # if abs(dist) > 1e-6:
+                        #     T_mate_correction[2, 3] = dist
+                    else:
+                        raise NotImplementedError(
+                            f"Mate type {mate_type} not supported"
+                        )
+                else:
+                    raise RuntimeError(
+                        f"Mate values for mate ID {mate_id} not provided for joint {mate_name}"
+                    )
 
                 # Child link frame adjusted for current mate value
                 T_target_child = T_WJ @ T_mate_correction
@@ -474,6 +506,7 @@ class CondensedRobot(Robot):
                     limits=mate_limits,
                     mate=mate,
                     origin=joint_origin,
+                    axis=axis,
                 )
                 robot.add_edge(curr_name, next_name, joint=joint_rec, data=joint_rec)
 

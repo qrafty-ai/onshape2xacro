@@ -768,9 +768,9 @@ class StepMeshExporter:
                         ms.generate_convex_hull()
 
                         # Simplify if needed (target 200 faces)
-                        if ms.current_mesh().face_number() > 200:
+                        if ms.current_mesh().face_number() > 2000:
                             ms.meshing_decimation_quadric_edge_collapse(
-                                targetfacenum=200
+                                targetfacenum=2000,
                             )
 
                         ms.save_current_mesh(str(col_path))

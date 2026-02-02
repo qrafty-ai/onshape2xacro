@@ -275,7 +275,33 @@ def test_condensed_robot_correction():
     cad = MagicMock()
     # Mock get_transform. Returns Identity for A and B.
     cad.get_transform.return_value = np.eye(4)
-    cad.keys_by_id = {}  # Needed for resolution
+    # Mock keys_by_id for resolution
+    # parent_occ (occ_A) -> key_A
+    key_a = MagicMock()
+    key_b = MagicMock()
+    # Mock PathKey behavior for equality check
+    key_a.__eq__ = lambda s, o: o is key_a
+    key_b.__eq__ = lambda s, o: o is key_b
+
+    cad.keys_by_id = {("occ_A",): key_a, ("occ_B",): key_b}
+
+    # Mock cad.mates for original mate lookup
+    # Mate id="feature_1". Original entities: [key_b (child), key_a (parent)]
+    # This corresponds to: Child (0) moves relative to Parent (1).
+    # Since Parent is Entity 1, sign should be +1.0.
+    # Key structure in CAD.mates is (assembly_key, parent_key, child_key)
+    mock_mate_data = MagicMock()
+    mock_mate_data.id = "feature_1"
+    # Set up mates such that URDF Parent (key_a) is Original Parent (key_a)
+    # This simulates Standard Traversal (Parent->Child)
+    cad.mates = {(None, key_a, key_b): mock_mate_data}
+
+    # Mock cad.parts for rigid root lookup
+    part_a = MagicMock()
+    part_a.rigidAssemblyKey = None
+    part_b = MagicMock()
+    part_b.rigidAssemblyKey = None
+    cad.parts = {key_a: part_a, key_b: part_b}
 
     # Mate Values: 90 degrees rotation around Z
     mate_values = {"feature_1": {"rotationZ": np.pi / 2, "translationZ": 0.0}}

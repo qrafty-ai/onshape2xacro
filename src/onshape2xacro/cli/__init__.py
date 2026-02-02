@@ -134,10 +134,7 @@ def main():
     except SystemExit:
         raise
     except Exception as e:
-        if getattr(config, "debug", False):
-            raise
-        print(f"Error: {e}")
-        sys.exit(1)
+        raise RuntimeError(f"Error: {e}") from e
 
 
 if __name__ == "__main__":

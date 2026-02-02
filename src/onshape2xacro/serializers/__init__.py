@@ -9,6 +9,7 @@ from onshape_robotics_toolkit.formats.base import RobotSerializer
 from onshape2xacro.config import ConfigOverride
 from onshape2xacro.naming import sanitize_name
 from onshape2xacro.mesh_exporters.step import StepMeshExporter
+from onshape2xacro.condensed_robot import JointRecord
 
 if TYPE_CHECKING:
     from onshape_robotics_toolkit.robot import Robot
@@ -461,7 +462,7 @@ class XacroSerializer(RobotSerializer):
     def _joint_to_xacro(
         self,
         root: ET._Element,
-        joint: Any,
+        joint: JointRecord,
         config: ConfigOverride,
         force_fixed: bool = False,
     ):
@@ -510,7 +511,8 @@ class XacroSerializer(RobotSerializer):
 
         # Update joint limits and axis if it's a movable joint
         if jtype in ["revolute", "prismatic", "continuous"]:
-            ET.SubElement(joint_el, "axis", xyz="0 0 -1")
+            axis_xyz = f"{joint.axis[0]} {joint.axis[1]} {joint.axis[2]}"
+            ET.SubElement(joint_el, "axis", xyz=axis_xyz)
 
         if jtype in ["revolute", "prismatic"]:
             # Limits from runtime YAML configuration
