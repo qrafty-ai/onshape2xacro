@@ -460,10 +460,8 @@ class CondensedRobot(Robot):
 
                         axis = (0.0, 0.0, sign)
                         angle = values.get("rotationZ", 0.0) * sign
-                        print(f"Joint {mate_name} axis set to {axis}")
-                        # import ipdb
+                        # print(f"Joint {mate_name} axis set to {axis}")
 
-                        # ipdb.set_trace()
                         if abs(angle) > 1e-6:
                             c, s = np.cos(angle), np.sin(angle)
                             T_mate_correction[:3, :3] = np.array(

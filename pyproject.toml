@@ -1,7 +1,7 @@
 [project]
 name = "onshape2xacro"
-version = "0.1.0"
-description = "Add your description here"
+dynamic = ["version"]
+description = "An exporter for converting Onshape assemblies into high-quality Xacro/URDF robot descriptions."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -31,8 +31,10 @@ xacro-to-urdf = "onshape2xacro.xacro_to_urdf:main"
 package = true
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
 
 [dependency-groups]
 dev = [
