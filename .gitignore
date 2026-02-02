@@ -19,9 +19,7 @@ uv.lock
 # Worktrees
 .worktrees/
 worktrees/
-ORT.log
-ORT.yaml
-*.png
+ORT.*
 manual_test/
 output_test/
 sample_xacros/
