@@ -1,310 +1,94 @@
 # onshape2xacro
 
-A seamless exporter tool from Onshape to ROS2 xacro description files.
+A streamlined exporter for converting Onshape assemblies into high-quality Xacro/URDF robot descriptions.
 
-## Features
+## Why yet another exporter?
 
-- **Hierarchical Xacro**: Maps Onshape subassemblies to xacro modules based on joint boundaries.
-- **Joint Detection**: Explicit control via `joint_` naming convention in Onshape.
-- **YAML Overrides**: Easily override joint limits, inertials, and dynamics.
-- **Multi-Robot Support**: Generated xacro macros accept a `prefix` argument for namespace isolation.
-- **Automatic Mesh Export**: Exports STL meshes organized by module.
-- **Fast Development**: Skip mass property API calls by default (uses placeholders).
+Existing exporters often output flat URDFs or require numerous API calls that can quickly drain out the annual limit. `onshape2xacro` is designed with a different philosophy:
+
+- **Easier to change values in Xacro**: Outputs clean Xacro files instead of flat URDFs. This makes it trivial to tweak joint limits, colors, or physics parameters directly in the code without re-exporting. Also, the generated xacro macro makes it easier to integrate the robot into the project and reduce post-processing need.
+- **Saves API calls via Local Processing**: Instead of downloading each part individually via the API, it fetches the entire assembly as a STEP file once. All mesh extraction and inertia calculations are then performed locally using the STEP data, resulting in a much faster and more reliable pipeline.
+- **Auto-link Merging**: Automatically identifies and merges parts that are fixed together in Onshape. This produces a clean, simplified kinematic tree that matches how the robot is actually controlled, rather than having a link for every single screw.
 
 ## Installation
 
-```bash
-uv sync
-```
+This project uses `uv` for modern, fast Python package management.
 
-## Project Structure
-
-### Core Files
-
-#### `src/onshape2xacro/cli/__init__.py`
-- **Function**: CLI argument parsing and command routing
-- **Defines**: `ExportConfig` and `VisualizeConfig` dataclasses
-- **Commands**: `onshape2xacro export` and `onshape2xacro visualize`
-- **Usage**: Entry point for all CLI commands
-
-#### `src/onshape2xacro/pipeline.py`
-- **Function**: Core export and visualization pipeline
-- **Functions**:
-  - `run_export()`: Fetches Onshape assembly, builds kinematic graph, creates robot model, and serializes to xacro
-  - `run_visualize()`: Fetches Onshape assembly and visualizes kinematic graph
-- **Dependencies**: Requires Onshape API credentials
-
-#### `src/onshape2xacro/serializers/__init__.py`
-- **Function**: Converts robot model to hierarchical xacro files
-- **Class**: `XacroSerializer` - Main serializer that:
-  - Groups components by subassembly
-  - Generates xacro macros for each module
-  - Exports STL meshes
-  - Creates joint and link definitions
-  - Handles mesh path resolution
-- **Key Functions**:
-  - `is_joint()`: Checks if mate name starts with `joint_`
-  - `get_joint_name()`: Extracts joint name from mate name
-  - `sanitize_name()`: Converts Onshape names to valid ROS identifiers
-  - `is_module_boundary()`: Determines subassembly boundaries
-
-#### `src/onshape2xacro/config/__init__.py`
-- **Function**: Configuration override management
-- **Class**: `ConfigOverride` - Loads and applies YAML configuration overrides
-- **Supports**: Joint limits, inertials, and dynamics overrides
-
-#### `src/onshape2xacro/validate.py`
-- **Function**: Validates xacro file structure
-- **Checks**: XML well-formedness, root element, link/joint counts, xacro includes/macros
-- **Command**: `validate-xacro <xacro_file>`
-- **Note**: Basic validation without ROS xacro (for full processing, install ROS)
-
-#### `src/onshape2xacro/visualize_export.py`
-- **Function**: Visualizes exported robot description structure
-- **Features**:
-  - Parses xacro files from export directory
-  - Shows link/joint hierarchy in text format
-  - Optional graph visualization (requires matplotlib)
-  - Lists mesh files and their usage
-- **Command**: `visualize-export <output_dir> [--graph <output.png>]`
-- **Purpose**: Verify exported structure matches Onshape assembly
-
-#### `src/onshape2xacro/xacro_to_urdf.py`
-- **Function**: Converts xacro files to URDF files
-- **Features**:
-  - Tries ROS xacro command first (if available)
-  - Falls back to basic xacro processing (expands includes and macros)
-  - Handles nested includes and macro expansion
-  - Replaces `${prefix}` variables
-- **Command**: `xacro-to-urdf <xacro_file> [-o <output.urdf>]`
-- **Use Case**: Convert xacro to URDF for tools that don't support xacro (e.g., urdf-viz)
-
-#### `src/onshape2xacro/fix_xacro.py`
-- **Function**: Fixes common issues in exported xacro files
-- **Fixes**:
-  - Joints with axis and limit but `type="fixed"` → changes to `revolute`
-  - Missing axis elements for revolute/prismatic joints → adds default axis
-- **Command**: `fix-xacro <xacro_file_or_dir> [-o <output>]`
-- **Use Case**: Correct export errors or fix manually edited files
-
-#### `src/onshape2xacro/simulate_robot.py`
-- **Function**: Simulates robot using PyBullet and tests joint movements
-- **Features**:
-  - Automatically converts xacro to URDF
-  - Loads robot into PyBullet
-  - Tests all movable joints through their range of motion
-  - Displays 3D visualization
-  - Reports joint test results
-- **Command**: `simulate-robot <output_dir>`
-- **Dependencies**: Requires `pybullet` and `numpy` (install with `uv pip install pybullet numpy`)
-
-## Usage Guide
-
-### 1. Environment Setup
-
-Set your Onshape API keys:
-```bash
-export ONSHAPE_ACCESS_KEY="your_access_key"
-export ONSHAPE_SECRET_KEY="your_secret_key"
-```
-
-### 2. Export from Onshape
-
-Export an Onshape assembly to xacro files:
+Use uvx directly:
 
 ```bash
-onshape2xacro export "https://cad.onshape.com/documents/..." --output ./robot_description
+uvx --from git+https://github.com/qrafty-ai/onshape2xacro onshape2xacro --help
 ```
 
-**Arguments**:
-- `url`: (Positional) The Onshape document URL pointing to an assembly
-- `--output`: Output directory (default: `.`)
-- `--name`: Robot name (default: from Onshape)
-- `--config`: Path to YAML override file
-- `--max-depth`: Max subassembly depth (default: 5)
-
-**Output Structure**:
-```
-robot_description/
-├── urdf/
-│   ├── <robot_name>.urdf.xacro    # Entry point
-│   ├── <robot_name>.xacro         # Main macro
-│   └── <subassembly>/              # Subassembly modules
-│       └── <subassembly>.xacro
-├── meshes/                         # STL mesh files
-│   └── *.stl
-└── config/                         # Configuration files
-    ├── joint_limits.yaml
-    └── inertials.yaml
-```
-
-### 3. Validate Export
-
-Check that the exported xacro file is well-formed:
+or manually clone the repo:
 
 ```bash
-uv run validate-xacro robot_description/urdf/<robot_name>.urdf.xacro
+git clone https://github.com/qrafty-ai/onshape2xacro.git
+cd onshape2xacro
+uv sync # or pip install -e .
 ```
 
-**Output**: Shows XML structure, link/joint counts, and xacro elements.
+## Usage
 
-### 4. Visualize Export Structure
+The export workflow is broken down into modular steps to give you full control over the process:
 
-View the exported robot structure to verify it matches Onshape:
+0. **Prerequisite**: Before exporting, rename all mates you wish to convert into URDF joints using the prefix joint_. This allows the tool to distinguish between your robot's kinematic joints and other assembly constraints.
 
-```bash
-# Text-based visualization
-uv run visualize-export robot_description
+1. **Auth**: Setup your Onshape API credentials.
 
-# With graph output (requires matplotlib: uv pip install matplotlib)
-uv run visualize-export robot_description --graph robot_graph.png
-```
+    ```bash
+    onshape2xacro auth login
+    ```
 
-**Shows**: Link hierarchy, joint connections, mesh file usage.
+    Follow the prompts to enter your Access and Secret keys. These are stored securely in your system keyring. You can check the status with `onshape2xacro auth status`.
 
-### 5. Visualize Onshape Assembly (Alternative)
+2. **Fetch CAD**: Download the assembly structure and STEP assets.
 
-Visualize the kinematic graph directly from Onshape (uses API):
+    ```bash
+    onshape2xacro fetch-cad <assembly_url> <local_dir>
+    ```
 
-```bash
-onshape2xacro visualize "https://cad.onshape.com/documents/..." --output graph.png
-```
+    This generates:
+    - `cad.pickle`: Cached assembly metadata.
+    - `assembly.step`: The full 3D geometry of the robot.
+    - `mate_values.json`: A mapping of joint IDs to their current values.
 
-**Note**: This fetches data from Onshape API, while `visualize-export` works on local files.
+    Note that due to the limitation of onshape API (see [Limitation](#limitation)) there's no stable enough way to retrieve the current mate values of the assembly automatically. Therefore, the default generated `mate_values.json` are all 0. The preferred way is to make sure you put all mates to 0 before fetching data (you can create a [Name Position](https://cad.onshape.com/help/Content/named-positions.htm) to make this easier). If there's mate that can' be set to `0`, you can modify `mate_values.json` manually to the correct values.
 
-### 6. Convert Xacro to URDF
+3. **Modify Mate Value** (Optional):
+    If you want to export the robot in a specific pose (e.g., a "zero" configuration that differs from the CAD model), edit `<local_dir>/mate_values.json` and adjust the joint angles or translations.
 
-Convert xacro files to URDF for tools that don't support xacro:
+4. **Export**: Generate the final Xacro description.
 
-```bash
-uv run xacro-to-urdf robot_description/urdf/<robot_name>.urdf.xacro -o robot.urdf
-```
+    ```bash
+    onshape2xacro export <local_dir> --output <final_xacro_dir>
+    ```
 
-**Use Cases**:
-- Viewing with `urdf-viz` (Rust-based viewer)
-- Using with tools that only support URDF
-- Debugging xacro expansion issues
+    This processes the local assets, calculates inertias based on geometry and material density, extracts visual/collision meshes, and writes the Xacro files.
 
-### 7. Fix Xacro Issues
+5. **BOM Export** (Optional):
+    For inertial calculation, you can provide a Bill of Materials (BOM) CSV to specify material densities and mass for different parts:
 
-Fix common problems in exported xacro files:
+    ```bash
+    onshape2xacro export <local_dir> --output <final_xacro_dir> --bom <path_to_bom.csv>
+    ```
 
-```bash
-# Fix single file
-uv run fix-xacro robot_description/urdf/<robot_name>.xacro
+    BOM can be exported from onshape's assembly page, make sure to include `Name`, `Material`, and `Mass` columns into the bill and make sure their values are presented:
+    ![BOM Example](./assets/bom_example.png)
 
-# Fix all xacro files in directory (recursive)
-uv run fix-xacro robot_description/urdf/
+    The inertia calculation assumes that the part's mass is uniformly distributed (which is true for metals but not the case for 3D-printed parts).
 
-# Fix and save to new file
-uv run fix-xacro input.xacro -o fixed.xacro
-```
+## Limitation
 
-**Fixes**:
-- Joints with axis/limit but wrong type
-- Missing axis elements
+### Requires zeroing robot pose before export
 
-### 8. Simulate Robot Joints
+**Why is manual input required?** To correctly align the URDF joints with the exported STEP geometry, the tool requires the specific values of every mate at the time of export. However, the current Onshape API ([getMateValues](https://cad.onshape.com/glassworks/explorer/#/Assembly/getMateValues)) does not support recursive retrieval and only returns data for the root assembly. Consequently, you must manually specify the mate values for any joints located inside sub-assemblies to ensure the kinematic chain matches the link meshes.
 
-Test that all joints rotate correctly using PyBullet:
+### Limited type of mates supported
 
-```bash
-# Install simulation dependencies
-uv pip install pybullet numpy
+Currently only revolute mates supported, PRs are welcome!
 
-# Run automated joint testing
-uv run simulate-robot robot_description
-```
+## Acknowledgements
 
-**Features**:
-- Automatically converts xacro to URDF
-- Loads robot into PyBullet
-- Tests each joint through its full range of motion
-- Displays 3D visualization
-- Reports success/failure for each joint
-
-## Configuration Overrides
-
-Create a YAML file to override robot parameters:
-
-```yaml
-joint_limits:
-  shoulder:
-    lower: -3.14
-    upper: 3.14
-    velocity: 1.5
-    effort: 100
-
-inertials:
-  link1:
-    mass: 5.0
-    inertia:
-      ixx: 0.1
-      iyy: 0.1
-      izz: 0.1
-
-dynamics:
-  elbow:
-    friction: 0.1
-    damping: 0.5
-```
-
-Use with export:
-```bash
-onshape2xacro export "https://..." --output ./robot --config overrides.yaml
-```
-
-## Joint Convention
-
-Only mates in Onshape starting with `joint_` will be treated as robot joints. All other mates are treated as fixed connections.
-
-- `joint_shoulder` → Joint named `shoulder`
-- `hinge_door` → Fixed connection
-- `fastened_1` → Fixed connection
-
-## Complete Workflow Example
-
-```bash
-# 1. Export from Onshape
-onshape2xacro export "https://cad.onshape.com/documents/..." --output ./my_robot
-
-# 2. Validate export
-uv run validate-xacro my_robot/urdf/my_robot.urdf.xacro
-
-# 3. Visualize structure
-uv run visualize-export my_robot --graph structure.png
-
-# 4. Fix any issues
-uv run fix-xacro my_robot/urdf/
-
-# 5. Convert to URDF for viewing
-uv run xacro-to-urdf my_robot/urdf/my_robot.urdf.xacro -o my_robot.urdf
-urdf-viz my_robot.urdf  # If urdf-viz is installed
-
-# 6. Test joints in simulation
-uv run simulate-robot my_robot
-```
-
-## Dependencies
-
-### Required
-- `onshape-robotics-toolkit`: Onshape API integration
-- `tyro`: CLI argument parsing
-- `lxml`: XML processing
-- `pyyaml`: YAML configuration
-- `xacro>=2.1.1`: Xacro processing
-
-### Optional
-- `matplotlib`: For graph visualization (`uv pip install matplotlib`)
-- `pybullet`, `numpy`: For simulation (`uv pip install pybullet numpy`)
-- ROS xacro: For full xacro processing (`sudo apt install ros-humble-xacro`)
-
-## Notes
-
-- **Xacro Processing**: The tool includes a basic xacro processor, but for full support (property substitution, complex macros), install ROS xacro.
-- **Mesh Paths**: Exported xacro files use relative paths (`../meshes/`). Tools like `urdf-viz` may need absolute paths - use `xacro-to-urdf` first.
-- **API Usage**: `onshape2xacro export` and `onshape2xacro visualize` consume Onshape API requests. Other commands work on local files only.
-
-## License
-
-MIT
+- **[onshape-robotics-toolkit](https://github.com/onshape-robotics/onshape-robotics-toolkit)**: This project directly utilizes the toolkit for CAD communication and kinematic graph construction.
+- **[onshape2robot](https://github.com/Rhoban/onshape2robot)**: We take great inspiration from the pioneering work of the `onshape2robot` project.
