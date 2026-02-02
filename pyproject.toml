@@ -40,6 +40,7 @@ build-backend = "setuptools.build_meta"
 dev = [
     "ipdb>=0.13.13",
     "pytest",
+    "pytest-cov>=7.0.0",
 ]
 visualize = [
     "matplotlib",
