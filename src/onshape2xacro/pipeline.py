@@ -1,11 +1,11 @@
 import os
 from pathlib import Path
+from typing import Dict, Any
 import numpy as np
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
 from onshape_robotics_toolkit.models.assembly import Occurrence
 from onshape2xacro.condensed_robot import CondensedRobot
 from onshape2xacro.mate_values import (
-    fetch_mate_values,
     load_mate_values,
     save_mate_values,
 )
@@ -68,6 +68,32 @@ def _try_get_client() -> Client | None:
     return None
 
 
+def _generate_default_mate_values(cad: CAD) -> Dict[str, Any]:
+    """
+    Generate default mate values (zeros) for all mates in the CAD.
+    This replaces the API fetch which is unreliable/unsupported.
+    """
+    mate_values = {}
+    if hasattr(cad, "mates") and cad.mates:
+        for m in cad.mates.values():
+            if (
+                hasattr(m, "id")
+                and m.id
+                and getattr(m, "name", "").startswith("joint_")
+            ):
+                mate_values[m.id] = {
+                    "featureId": m.id,
+                    "mateName": getattr(m, "name", "unknown"),
+                    "rotationZ": 0.0,
+                    "translationZ": 0.0,
+                    "rotationX": 0.0,
+                    "rotationY": 0.0,
+                    "translationX": 0.0,
+                    "translationY": 0.0,
+                }
+    return mate_values
+
+
 def run_export(config: ExportConfig):
     """Run the complete export pipeline."""
     url_path = Path(config.url)
@@ -111,11 +137,13 @@ def run_export(config: ExportConfig):
         client, cad = _get_client_and_cad(config.url, config.max_depth)
         asset_path = None
 
-        # Fetch mate values from API
-        print("Fetching mate values...")
-        mate_values = fetch_mate_values(
-            client, cad.document_id, cad.wtype, cad.workspace_id, cad.element_id
+        print(
+            "Warning: API mate value fetching is disabled. Generating default (zero) mate values."
         )
+        print(
+            "To specify joint angles, use 'onshape2xacro fetch-cad', edit 'mate_values.json', and export locally."
+        )
+        mate_values = _generate_default_mate_values(cad)
 
     # 3. Build Kinematic Graph
     print("Building kinematic graph...")
@@ -187,58 +215,8 @@ def run_fetch_cad(config: FetchCadConfig):
     exporter = StepMeshExporter(client, cad)
     exporter.export_step(output_dir / "assembly.step")
 
-    print("Fetching mate values...")
-    mate_values = fetch_mate_values(
-        client, cad.document_id, cad.wtype, cad.workspace_id, cad.element_id
-    )
-
-    # Fetch mate values for subassemblies
-    processed_assemblies = {
-        (cad.document_id, cad.wtype, cad.workspace_id, cad.element_id)
-    }
-
-    if hasattr(cad, "subassemblies") and hasattr(cad, "instances"):
-        for key in cad.subassemblies:
-            if key not in cad.instances:
-                continue
-
-            inst = cad.instances[key]
-            if getattr(inst, "type", None) != "Assembly":
-                continue
-
-            did = getattr(inst, "documentId", None)
-            eid = getattr(inst, "elementId", None)
-
-            if not did or not eid:
-                continue
-
-            wvm = None
-            wvmid = None
-
-            if did == cad.document_id:
-                # If in the same document, use the root's WVM to ensure we get the element
-                # as it exists in the current context.
-                wvm = cad.wtype
-                wvmid = cad.workspace_id
-            elif getattr(inst, "documentVersion", None):
-                wvm = "v"
-                wvmid = inst.documentVersion
-            elif getattr(inst, "documentMicroversion", None):
-                wvm = "m"
-                wvmid = inst.documentMicroversion
-
-            if wvm and wvmid:
-                ident = (did, wvm, wvmid, eid)
-                if ident not in processed_assemblies:
-                    try:
-                        sub_values = fetch_mate_values(client, did, wvm, wvmid, eid)
-                        if sub_values:
-                            mate_values.update(sub_values)
-                    except Exception as e:
-                        print(
-                            f"Warning: Failed to fetch mate values for subassembly {eid}: {e}"
-                        )
-                    processed_assemblies.add(ident)
+    print("Generating default mate values...")
+    mate_values = _generate_default_mate_values(cad)
 
     save_mate_values(output_dir / "mate_values.json", mate_values)
     print(f"Saved mate values to {output_dir / 'mate_values.json'}")

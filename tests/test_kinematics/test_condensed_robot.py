@@ -85,7 +85,10 @@ def test_condensed_robot_from_graph_simple():
     cad = MagicMock()
     cad.get_transform.return_value = np.eye(4)
 
-    robot = CondensedRobot.from_graph(graph, cad=cad, name="TestRobot")
+    mate_values = {"id_joint_1": {"rotationZ": 0.0}}
+    robot = CondensedRobot.from_graph(
+        graph, cad=cad, name="TestRobot", mate_values=mate_values
+    )
 
     # Check nodes in robot
     # robot should have 2 nodes now
@@ -130,13 +133,22 @@ def test_condensed_robot_name_collision():
 
     node1 = MockNode("Link")
     node2 = MockNode("Link")  # Different object, same name
+
+    # Add edge to avoid multiple roots error (must be joint to keep links separate)
+    edge = MagicMock()
+    edge.u = node1
+    edge.v = node2
+    edge.mate = create_mock_mate_with_entities("joint_1", node1.occurrence)
+
     graph.nodes = [node1, node2]
-    graph.edges = []
+    graph.edges = [edge]
 
     cad = MagicMock()
     cad.get_transform.return_value = np.eye(4)
 
-    robot = CondensedRobot.from_graph(graph, cad=cad)
+    mate_values = {"id_joint_1": {"rotationZ": 0.0}}
+
+    robot = CondensedRobot.from_graph(graph, cad=cad, mate_values=mate_values)
     nodes = list(robot.nodes(data=True))
     assert len(nodes) == 2
     names = sorted([data["link"].name for _, data in nodes])
@@ -209,7 +221,9 @@ def test_condensed_robot_networkx_style():
     cad = MagicMock()
     cad.get_transform.return_value = np.eye(4)
 
-    robot = CondensedRobot.from_graph(graph, cad=cad)
+    mate_values = {"id_joint_1": {"rotationZ": 0.0}}
+
+    robot = CondensedRobot.from_graph(graph, cad=cad, mate_values=mate_values)
     assert len(list(robot.nodes)) == 2
     assert len(list(robot.edges)) == 1
     edge_data = list(robot.edges(data=True))[0][2]

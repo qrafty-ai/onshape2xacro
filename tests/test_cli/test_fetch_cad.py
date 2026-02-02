@@ -55,10 +55,9 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     )
 
     # Mock fetch_mate_values and save_mate_values
+    mock_fetch = MagicMock(return_value={"mate1": {}})
+    monkeypatch.setattr("onshape2xacro.pipeline.fetch_mate_values", mock_fetch)
 
-    monkeypatch.setattr(
-        "onshape2xacro.pipeline.fetch_mate_values", lambda *args: {"mate1": {}}
-    )
     mock_save = MagicMock()
     monkeypatch.setattr("onshape2xacro.pipeline.save_mate_values", mock_save)
 
@@ -86,3 +85,5 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     # Verify mate values saved
     mock_save.assert_called_once()
     assert (output_file / "mate_values.json").name == "mate_values.json"
+
+    mock_fetch.assert_not_called()

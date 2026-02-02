@@ -28,4 +28,4 @@ sample_xacros/
 test_tyro.py
 assembly_check.png
 waist*/
-openarm_left*/
+openarm_*

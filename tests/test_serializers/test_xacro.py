@@ -50,7 +50,7 @@ def test_xacro_uses_link_mesh_map(tmp_path):
 
     joint_mate = SimpleNamespace(name="joint_revolute", mateType="REVOLUTE")
     joint = JointRecord(
-        "joint_revolute", "REVOLUTE", "link_a", "link_b", None, joint_mate
+        "joint_revolute", "REVOLUTE", "link_a", "link_b", (0, 0, 1), joint_mate
     )
     robot.add_edge(node_a, node_b, data=joint)
 
@@ -119,7 +119,7 @@ def test_xacro_joint_origin(tmp_path):
         "REVOLUTE",
         "link_a",
         "link_b",
-        None,
+        (0, 0, 1),
         joint_mate,
         origin=origin,
     )

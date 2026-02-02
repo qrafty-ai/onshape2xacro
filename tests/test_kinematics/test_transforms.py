@@ -52,6 +52,7 @@ def test_condensed_robot_transforms():
         def __init__(self, name, parent_occ, T_PJ):
             self.name = name
             self.mateType = "REVOLUTE"
+            self.id = f"id_{name}"
             self.limits = None
             self.matedEntities = [MockEntity(parent_occ, T_PJ)]
 
@@ -97,7 +98,8 @@ def test_condensed_robot_transforms():
     cad.get_transform.return_value = T_WP_parent
 
     # 4. Run CondensedRobot.from_graph
-    robot = CondensedRobot.from_graph(graph, cad=cad)
+    mate_values = {"id_joint_1": {"rotationZ": 0.0}}
+    robot = CondensedRobot.from_graph(graph, cad=cad, mate_values=mate_values)
 
     # Find links
     links = {data["link"].name: data["link"] for _, data in robot.nodes(data=True)}
