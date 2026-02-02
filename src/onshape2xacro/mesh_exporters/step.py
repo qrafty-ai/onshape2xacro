@@ -102,6 +102,11 @@ def _parse_export_id(label_name: str) -> str:
     match = EXPORT_ID_REGEX.search(label_name or "")
     if match:
         return match.group(1)
+
+    # Fallback: check if the name itself looks like an ID (long base64-like string)
+    if re.match(r"^[A-Za-z0-9+/]{10,}$", label_name):
+        return label_name
+
     return ""
 
 
@@ -630,14 +635,45 @@ class StepMeshExporter:
                 if part is None or getattr(part, "isRigidAssembly", False):
                     continue
 
+                part_world = _part_world_matrix(part)
+                part_world_mm = part_world.copy()
+                part_world_mm[:3, 3] *= 1000.0
+
                 def _pick_shape(match_key: Any):
                     shapes = part_shapes.get(match_key)
-                    if shapes:
-                        shape_idx = used_indices.get(match_key, 0)
-                        shape_idx = min(shape_idx, len(shapes) - 1)
-                        used_indices[match_key] = shape_idx + 1
-                        return shapes[shape_idx]
-                    return None
+                    if not shapes:
+                        return None
+
+                    locs = part_locations.get(match_key)
+                    if locs and len(shapes) > 1:
+                        # Try to match by location (nearest neighbor)
+                        best_idx = -1
+                        min_dist = 1e9  # 1000 km is a safe upper bound
+
+                        target_pos = part_world_mm[:3, 3]
+
+                        for i, loc in enumerate(locs):
+                            trsf = loc.Transformation()
+                            # Check translation distance
+                            trans = trsf.TranslationPart()
+                            dx = trans.X() - target_pos[0]
+                            dy = trans.Y() - target_pos[1]
+                            dz = trans.Z() - target_pos[2]
+                            dist_sq = dx * dx + dy * dy + dz * dz
+
+                            if dist_sq < min_dist:
+                                min_dist = dist_sq
+                                best_idx = i
+
+                        # Tolerance check: 1mm error allowed (3mm distance)
+                        if best_idx >= 0 and min_dist < 100.0:
+                            return shapes[best_idx]
+
+                    # Fallback to sequential index
+                    shape_idx = used_indices.get(match_key, 0)
+                    shape_idx = min(shape_idx, len(shapes) - 1)
+                    used_indices[match_key] = shape_idx + 1
+                    return shapes[shape_idx]
 
                 part_path = getattr(key, "path", None)
                 if part_path:
@@ -675,9 +711,7 @@ class StepMeshExporter:
                     )
                     continue
 
-                part_world = _part_world_matrix(part)
-                part_world_mm = part_world.copy()
-                part_world_mm[:3, 3] *= 1000.0
+                # part_world was computed above
                 link_from_part = link_world_inv @ part_world_mm
                 trsf = _matrix_to_trsf(link_from_part)
                 transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
@@ -691,6 +725,7 @@ class StepMeshExporter:
                     {
                         "part_id": getattr(part, "partId", str(key)),
                         "part_name": part_name_from_list or str(key),
+                        "mesh_match": "FOUND",
                     }
                 )
 
