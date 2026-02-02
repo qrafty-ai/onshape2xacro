@@ -92,6 +92,9 @@ class InertiaReport:
 
         lines = ["# Inertia and Mesh Calculation Debug Report\n"]
 
+        total_robot_mass = sum(p.mass for p in self.link_properties.values())
+        lines.append(f"**Total Robot Weight:** {total_robot_mass:.4f} kg\n")
+
         for link_name in sorted(self.link_parts.keys()):
             parts = self.link_parts[link_name]
             props = self.link_properties.get(link_name)
