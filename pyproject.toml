@@ -3,7 +3,7 @@ name = "onshape2xacro"
 dynamic = ["version"]
 description = "An exporter for converting Onshape assemblies into high-quality Xacro/URDF robot descriptions."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12, <3.13"
 dependencies = [
     "onshape-robotics-toolkit",
     "tyro",
@@ -40,6 +40,7 @@ build-backend = "setuptools.build_meta"
 dev = [
     "ipdb>=0.13.13",
     "pytest",
+    "pytest-cov>=7.0.0",
 ]
 visualize = [
     "matplotlib",

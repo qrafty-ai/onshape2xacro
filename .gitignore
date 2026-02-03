@@ -16,6 +16,11 @@ build/
 *.egg-info/
 uv.lock
 
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
 # Worktrees
 .worktrees/
 worktrees/
