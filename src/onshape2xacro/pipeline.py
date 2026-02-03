@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Dict, Any
 import numpy as np
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
+from onshape2xacro.optimized_cad import OptimizedCAD, OptimizedClient
 from onshape_robotics_toolkit.models.assembly import Occurrence
 from onshape2xacro.condensed_robot import CondensedRobot
 from onshape2xacro.serializers import XacroSerializer
@@ -53,15 +54,17 @@ def _get_client_and_cad(url: str, max_depth: int) -> tuple[Client, CAD]:
             "  2. Run 'onshape2xacro auth login' to store credentials in system keyring"
         )
 
-    client = Client(env=None, base_url="https://cad.onshape.com")
+    client = OptimizedClient(env=None, base_url="https://cad.onshape.com")
     print(f"Fetching assembly from {url}...")
-    cad = CAD.from_url(url, client=client, max_depth=max_depth)
+    cad = OptimizedCAD.from_url(
+        url, client=client, max_depth=max_depth, fetch_mass_properties=False
+    )
     return client, cad
 
 
 def _try_get_client() -> Client | None:
     if _setup_credentials()[0]:
-        return Client(env=None, base_url="https://cad.onshape.com")
+        return OptimizedClient(env=None, base_url="https://cad.onshape.com")
     return None
 
 
