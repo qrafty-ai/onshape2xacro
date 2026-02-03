@@ -4,6 +4,7 @@ Cross-platform credential storage for Onshape API keys using keyring.
 
 import os
 import keyring
+from keyring.errors import PasswordDeleteError
 
 SERVICE_NAME = "onshape2xacro"
 ACCESS_KEY_USERNAME = "access_key"
@@ -45,12 +46,12 @@ def delete_credentials() -> None:
     """Remove stored credentials from the system keyring."""
     try:
         keyring.delete_password(SERVICE_NAME, ACCESS_KEY_USERNAME)
-    except keyring.errors.PasswordDeleteError:
+    except PasswordDeleteError:
         pass  # Key didn't exist
 
     try:
         keyring.delete_password(SERVICE_NAME, SECRET_KEY_USERNAME)
-    except keyring.errors.PasswordDeleteError:
+    except PasswordDeleteError:
         pass  # Key didn't exist
 
 
