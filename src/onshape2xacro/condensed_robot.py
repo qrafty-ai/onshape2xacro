@@ -7,7 +7,7 @@ from collections.abc import Iterable as IterableABC
 from onshape_robotics_toolkit.models.assembly import MatedEntity
 from onshape_robotics_toolkit.robot import Robot
 from onshape_robotics_toolkit.models.link import Origin
-from onshape_robotics_toolkit.parse import CAD, MateFeatureData
+from onshape_robotics_toolkit.parse import CAD, MateFeatureData, PathKey
 from onshape2xacro.naming import sanitize_name
 
 logger = logging.getLogger(__name__)
@@ -540,5 +540,104 @@ class CondensedRobot(Robot):
 
                 visited.add(next_name)
                 queue.append(next_name)
+
+        # 3. Add Virtual Frames from Mate Connectors
+        if hasattr(cad, "mate_connectors") and cad.mate_connectors:
+            key_to_link: dict[PathKey, str] = {}
+            for link_name, link_rec in link_to_rec.items():
+                for key in link_rec.keys:
+                    key_path = to_id_tuple(key)
+                    path_key = cad.keys_by_id.get(key_path)
+                    if path_key:
+                        key_to_link[path_key] = link_name
+
+            for mc in cad.mate_connectors:
+                frame_name = getattr(mc, "name", "")
+                if not frame_name.startswith("frame_"):
+                    continue
+
+                mc_occurrence = getattr(mc, "occurrence", None)
+                if not mc_occurrence:
+                    continue
+
+                mc_key = cad.keys_by_id.get(tuple(mc_occurrence))
+                if mc_key is None:
+                    continue
+
+                parent_link_name = key_to_link.get(mc_key)
+                if parent_link_name is None:
+                    continue
+
+                parent_link_rec = link_to_rec.get(parent_link_name)
+                if parent_link_rec is None:
+                    continue
+
+                T_part_mc = mc.mateConnectorCS.to_tf
+
+                # Get part world transform
+                T_world_part = cad.get_transform(mc_key)
+                if T_world_part is None:
+                    T_world_part = np.eye(4)
+                else:
+                    if not np.allclose(
+                        T_world_part[3, :], [0, 0, 0, 1]
+                    ) and np.allclose(T_world_part[:, 3], [0, 0, 0, 1]):
+                        T_world_part = T_world_part.T
+
+                # Calculate frame world transform
+                T_world_mc = T_world_part @ T_part_mc
+
+                # Calculate joint origin relative to link
+                T_world_link = parent_link_rec.frame_transform
+                if T_world_link is None:
+                    T_world_link = np.eye(4)
+
+                T_link_mc = np.linalg.inv(T_world_link) @ T_world_mc
+
+                # Create unique link name
+                base_name = sanitize_name(frame_name)
+
+                new_link_name = base_name
+                suffix = 1
+                while new_link_name in link_to_rec or new_link_name in robot.nodes:
+                    new_link_name = f"{base_name}_{suffix}"
+                    suffix += 1
+
+                # Create Link Record (Virtual)
+                frame_link_rec = LinkRecord(
+                    name=new_link_name,
+                    part_ids=[],
+                    occurrences=[],
+                    part_names=[],
+                    keys=[],
+                    parent=parent_link_rec.parent,
+                    frame_transform=T_world_mc,
+                )
+
+                robot.add_node(new_link_name, link=frame_link_rec, data=frame_link_rec)
+                link_to_rec[new_link_name] = frame_link_rec
+
+                # Create Joint Record (Fixed)
+                joint_name = f"fixed_{new_link_name}"
+                joint_origin = Origin.from_matrix(T_link_mc)
+
+                joint_rec = JointRecord(
+                    name=joint_name,
+                    joint_type="fixed",
+                    parent=parent_link_name,
+                    child=new_link_name,
+                    axis=(0.0, 0.0, 0.0),
+                    origin=joint_origin,
+                )
+
+                robot.add_edge(
+                    parent_link_name,
+                    new_link_name,
+                    joint=joint_rec,
+                    data=joint_rec,
+                )
+                logger.info(
+                    f"Added virtual frame link '{new_link_name}' attached to '{parent_link_name}'"
+                )
 
         return robot
