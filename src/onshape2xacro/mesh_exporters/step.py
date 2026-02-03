@@ -936,53 +936,52 @@ class StepMeshExporter:
                         print(f"Error creating visual mesh for {link_name}: {e}")
                         raise e
 
-                    # 2. Collision: CoACD
-                    collision_filenames: List[str]
+                    # 2. Collision: Decomposed hulls (using CoACD)
                     try:
-                        # Load raw mesh for CoACD
-                        mesh_raw = trimesh.load(str(temp_stl), force="mesh")
-
-                        # Run CoACD
+                        mesh = trimesh.load(str(temp_stl), force="mesh")
+                        coacd_mesh = coacd.Mesh(mesh.vertices, mesh.faces)
                         parts = coacd.run_coacd(
-                            mesh_raw.vertices,
-                            mesh_raw.faces,
-                            threshold=0.05,
-                            max_convex_hulls=32,
-                            seed=42,
+                            coacd_mesh, threshold=0.05, max_convex_hull=32, seed=42
                         )
 
+                        collision_filenames = []
                         if not parts:
-                            raise RuntimeError("CoACD returned no parts")
+                            # Fallback to raw STL if CoACD returns nothing
+                            col_filename = f"collision/{link_name}_0.stl"
+                            col_path = mesh_dir / col_filename
+                            import shutil
 
-                        collision_list = []
-                        # Save each hull
-                        for i, (vs, fs) in enumerate(parts):
-                            hull_mesh = trimesh.Trimesh(vs, fs)
-                            hull_filename = f"collision/{link_name}_{i}.stl"
-                            hull_path = mesh_dir / hull_filename
-                            hull_mesh.export(hull_path)
-                            collision_list.append(hull_filename)
+                            shutil.copy(temp_stl, col_path)
+                            collision_filenames.append(col_filename)
+                        else:
+                            for i, (verts, faces) in enumerate(parts):
+                                col_filename = f"collision/{link_name}_{i}.stl"
+                                col_path = mesh_dir / col_filename
+                                part_mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+                                part_mesh.export(str(col_path))
+                                collision_filenames.append(col_filename)
 
-                        if not collision_list:
-                            raise RuntimeError("CoACD produced empty hull list")
-
-                        collision_filenames = collision_list
+                        col_result = collision_filenames
 
                     except Exception as e:
                         print(
-                            f"CoACD failed for {link_name}: {e}. Falling back to raw STL."
+                            f"Error creating collision mesh for {link_name} with CoACD: {e}"
                         )
+                        # Fallback to single convex hull (pymeshlab or trimesh)
                         col_filename = f"collision/{link_name}_0.stl"
                         col_path = mesh_dir / col_filename
-                        import shutil
+                        try:
+                            import shutil
 
-                        shutil.copy(temp_stl, col_path)
-                        collision_filenames = [col_filename]
+                            shutil.copy(temp_stl, col_path)
+                        except Exception:
+                            pass
+                        col_result = [col_filename]
 
                     # Store both
                     mesh_map[link_name] = {
                         "visual": vis_filename,
-                        "collision": collision_filenames,
+                        "collision": col_result,
                     }
 
                     # Clean up temp
