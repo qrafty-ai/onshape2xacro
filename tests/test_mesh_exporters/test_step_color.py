@@ -173,6 +173,53 @@ def test_collect_shapes_with_color():
         assert part_colors["part_1"] == [(1.0, 0.0, 0.0)]
 
 
+def test_collect_shapes_inheritance():
+    shape_tool = MagicMock()
+    color_tool = MagicMock()
+    label = MagicMock()
+    parent_loc = MagicMock()
+
+    part_shapes = {}
+    part_locations = {}
+    part_colors = {}
+
+    # Setup mocks for leaf
+    shape_tool.IsAssembly.return_value = False
+    shape_tool.IsAssembly_s.return_value = False
+    shape_tool.GetReferredShape.return_value = False
+    shape_tool.GetReferredShape_s.return_value = False
+
+    shape = MagicMock()
+    shape.IsNull.return_value = False
+    shape_tool.GetShape.return_value = shape
+    shape_tool.GetShape_s.return_value = shape
+
+    # Mock _get_color to return None (no local color)
+    with (
+        patch("onshape2xacro.mesh_exporters.step._get_color", return_value=None),
+        patch(
+            "onshape2xacro.mesh_exporters.step._get_occurrence_id", return_value="occ_1"
+        ),
+        patch("onshape2xacro.mesh_exporters.step._label_name", return_value="part_1"),
+    ):
+        # Call with inherited color
+        inherited = (0.0, 1.0, 0.0)  # Green
+
+        _collect_shapes(
+            shape_tool,
+            color_tool,
+            label,
+            parent_loc,
+            part_shapes,
+            part_locations,
+            part_colors,
+            inherited_color=inherited,
+        )
+
+        # Verify inherited color was used
+        assert part_colors["occ_1"] == [inherited]
+
+
 def test_export_link_meshes_color_integration(tmp_path):
     # Test the full integration in export_link_meshes
     client = MagicMock()

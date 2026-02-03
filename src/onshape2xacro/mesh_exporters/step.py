@@ -27,7 +27,6 @@ from OCP.gp import gp_Trsf
 from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from loguru import logger
 import trimesh
-import pymeshlab
 import coacd
 
 
@@ -191,7 +190,7 @@ def _iter_components(shape_tool: Any, label: TDF_Label) -> Iterable[TDF_Label]:
 
 
 def _get_color(
-    color_tool: Any, label: TDF_Label, shape: Any
+    color_tool: Any, label: TDF_Label, shape: Any = None
 ) -> Optional[Tuple[float, float, float]]:
     if color_tool is None:
         return None
@@ -202,15 +201,21 @@ def _get_color(
     try:
         if color_tool.GetColor(label, XCAFDoc_ColorType.XCAFDoc_ColorSurf, color):
             return (color.Red(), color.Green(), color.Blue())
+        if color_tool.GetColor(label, XCAFDoc_ColorType.XCAFDoc_ColorGen, color):
+            return (color.Red(), color.Green(), color.Blue())
+        if color_tool.GetColor(label, XCAFDoc_ColorType.XCAFDoc_ColorCurv, color):
+            return (color.Red(), color.Green(), color.Blue())
     except Exception:
         pass
 
     # Try getting color from shape (surface)
     try:
-        if not shape.IsNull():
+        if shape is not None and not shape.IsNull():
             if color_tool.GetColor(shape, XCAFDoc_ColorType.XCAFDoc_ColorSurf, color):
                 return (color.Red(), color.Green(), color.Blue())
             if color_tool.GetColor(shape, XCAFDoc_ColorType.XCAFDoc_ColorGen, color):
+                return (color.Red(), color.Green(), color.Blue())
+            if color_tool.GetColor(shape, XCAFDoc_ColorType.XCAFDoc_ColorCurv, color):
                 return (color.Red(), color.Green(), color.Blue())
     except Exception:
         pass
@@ -227,6 +232,7 @@ def _collect_shapes(
     part_locations: Dict[Any, TopLoc_Location],
     part_colors: Dict[Any, Any],
     current_path: Tuple[str, ...] = (),
+    inherited_color: Optional[Tuple[float, float, float]] = None,
 ):
     is_assembly = getattr(shape_tool, "IsAssembly_s", None)
     if not callable(is_assembly):
@@ -237,6 +243,10 @@ def _collect_shapes(
             comp_loc = _combine_locations(
                 parent_loc, _get_label_location(shape_tool, comp)
             )
+
+            # Check for color on the component instance (overrides inherited)
+            comp_color = _get_color(color_tool, comp)
+            next_inherited_color = comp_color if comp_color else inherited_color
 
             # Extract occurrence ID from instance label or NamedData; fallback to label name
             occ_id = _get_occurrence_id(comp) or _label_name(comp)
@@ -257,6 +267,7 @@ def _collect_shapes(
                     part_locations,
                     part_colors,
                     new_path,
+                    inherited_color=next_inherited_color,
                 )
             else:
                 # If no reference, just recurse on the component itself
@@ -269,6 +280,7 @@ def _collect_shapes(
                     part_locations,
                     part_colors,
                     current_path,
+                    inherited_color=next_inherited_color,
                 )
         return
 
@@ -291,8 +303,15 @@ def _collect_shapes(
     if shape.IsNull():
         return
 
-    # Get color
-    rgb = _get_color(color_tool, shape_label, shape)
+    # Get color: explicit on leaf/prototype > inherited from assembly instance
+    # Actually, inherited (instance override) usually takes precedence over prototype color
+    # But if the prototype has a specific color, does it override the assembly color?
+    # In Onshape: Part Studio color is default. Assembly appearance overrides it.
+    # So inherited_color (assembly override) > local color (prototype)
+
+    rgb = inherited_color
+    if not rgb:
+        rgb = _get_color(color_tool, shape_label, shape)
 
     # Store by full occurrence path (tuple of IDs)
     if current_path not in part_shapes:
@@ -613,7 +632,7 @@ class StepMeshExporter:
                 )
 
         stl_writer = StlAPI_Writer()
-        mesh_map: Dict[str, str | Dict[str, str]] = {}
+        mesh_map: Dict[str, str | Dict[str, str | List[str]]] = {}
         missing_meshes: Dict[str, List[Dict[str, str]]] = {}
 
         occ_path_to_name: Dict[Tuple[str, ...], str] = {}
@@ -836,7 +855,7 @@ class StepMeshExporter:
                             f"Failed to compute inertia for {link_name}: {e}"
                         )
 
-                # Process with trimesh and pymeshlab
+                # Process with trimesh
                 try:
                     vis_filename = f"visual/{link_name}.{visual_mesh_format}"
                     vis_path = mesh_dir / vis_filename
@@ -901,19 +920,22 @@ class StepMeshExporter:
                         raise e
 
                     # 2. Collision: CoACD
-                    collision_filenames: List[str] | str
+                    collision_filenames: List[str]
                     try:
                         # Load raw mesh for CoACD
                         mesh_raw = trimesh.load(str(temp_stl), force="mesh")
-                        coacd_mesh = coacd.Mesh(mesh_raw.vertices, mesh_raw.faces)
 
                         # Run CoACD
                         parts = coacd.run_coacd(
-                            coacd_mesh,
+                            mesh_raw.vertices,
+                            mesh_raw.faces,
                             threshold=0.05,
-                            max_convex_hull=32,
+                            max_convex_hulls=32,
                             seed=42,
                         )
+
+                        if not parts:
+                            raise RuntimeError("CoACD returned no parts")
 
                         collision_list = []
                         # Save each hull
@@ -924,46 +946,21 @@ class StepMeshExporter:
                             hull_mesh.export(hull_path)
                             collision_list.append(hull_filename)
 
+                        if not collision_list:
+                            raise RuntimeError("CoACD produced empty hull list")
+
                         collision_filenames = collision_list
 
                     except Exception as e:
                         print(
-                            f"CoACD failed for {link_name}: {e}. Falling back to single convex hull."
+                            f"CoACD failed for {link_name}: {e}. Falling back to raw STL."
                         )
-                        # Fallback to single convex hull using pymeshlab (existing logic)
-                        col_filename = f"collision/{link_name}.stl"
+                        col_filename = f"collision/{link_name}_0.stl"
                         col_path = mesh_dir / col_filename
+                        import shutil
 
-                        try:
-                            ms = pymeshlab.MeshSet()
-                            ms.load_new_mesh(str(temp_stl))
-
-                            # Generate Convex Hull
-                            ms.generate_convex_hull()
-
-                            # Simplify if needed (target 200 faces)
-                            if ms.current_mesh().face_number() > 2000:
-                                ms.meshing_decimation_quadric_edge_collapse(
-                                    targetfacenum=2000,
-                                )
-
-                            ms.save_current_mesh(str(col_path))
-
-                            # Check file size constraint (<50KB)
-                            if col_path.stat().st_size > 50 * 1024:
-                                print(
-                                    f"Warning: Collision mesh {col_filename} is > 50KB"
-                                )
-
-                        except Exception as e2:
-                            print(
-                                f"Fallback collision failed for {link_name}: {e2}. Copying raw STL."
-                            )
-                            import shutil
-
-                            shutil.copy(temp_stl, col_path)
-
-                        collision_filenames = col_filename
+                        shutil.copy(temp_stl, col_path)
+                        collision_filenames = [col_filename]
 
                     # Store both
                     mesh_map[link_name] = {
@@ -976,7 +973,7 @@ class StepMeshExporter:
 
                 except Exception as e:
                     print(f"Error processing mesh for {link_name}: {e}")
-                    # Fallback to original STL behavior if trimesh/pymeshlab fails
+                    # Fallback to original STL behavior if trimesh fails
                     final_stl = mesh_dir / "visual" / f"{link_name}.stl"
                     if temp_stl.exists():
                         temp_stl.rename(final_stl)
