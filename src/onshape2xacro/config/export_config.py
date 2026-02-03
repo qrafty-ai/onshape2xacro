@@ -3,12 +3,13 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any
 from dataclasses import dataclass, field, asdict
+from typing import Literal
 
 
 @dataclass
 class ExportOptions:
     name: str = "robot"
-    visual_mesh_format: str = "obj"
+    visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
     output: Path = field(default_factory=lambda: Path("output"))
 
 
@@ -49,7 +50,7 @@ class ExportConfiguration:
         self,
         name: str | None = None,
         output: Path | None = None,
-        visual_mesh_format: str | None = None,
+        visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None,
     ) -> None:
         if name:
             self.export.name = name

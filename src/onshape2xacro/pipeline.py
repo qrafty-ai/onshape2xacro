@@ -5,12 +5,10 @@ import numpy as np
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
 from onshape_robotics_toolkit.models.assembly import Occurrence
 from onshape2xacro.condensed_robot import CondensedRobot
-from onshape2xacro.mate_values import (
-    load_mate_values,
-)
 from onshape2xacro.serializers import XacroSerializer
+from onshape2xacro.config.export_config import ExportConfiguration
 from onshape2xacro.config import ConfigOverride
-from onshape2xacro.cli import (
+from onshape2xacro.schema import (
     AuthConfig,
     AuthLogoutConfig,
     AuthStatusConfig,
@@ -93,56 +91,60 @@ def _generate_default_mate_values(cad: CAD) -> Dict[str, Any]:
     return mate_values
 
 
-def run_export(config: ExportConfig):
+def run_export(
+    config: ExportConfig, export_configuration: ExportConfiguration | None = None
+):
     """Run the complete export pipeline."""
-    url_path = Path(config.url)
+    local_dir = config.path
     bom_path = config.bom
-    if url_path.is_dir() and (url_path / "cad.pickle").exists():
-        import pickle
 
-        print(f"Loading pre-fetched CAD data from {url_path}...")
-        with open(url_path / "cad.pickle", "rb") as f:
-            cad = pickle.load(f)
+    if not local_dir.is_dir() or not (local_dir / "cad.pickle").exists():
+        raise RuntimeError(
+            f"Local directory {local_dir} is invalid or missing cad.pickle. "
+            "Remote URL exports are deprecated for 'export' command. "
+            "Use 'fetch-cad' first."
+        )
 
-        # In pre-fetched mode, we stay local unless assembly.step is missing.
-        if (url_path / "assembly.step").exists():
-            asset_path = url_path / "assembly.step"
-            client = None
-        elif (url_path / "assembly.zip").exists():
-            asset_path = url_path / "assembly.zip"
-            client = None
-        else:
-            asset_path = None
-            client = _try_get_client()
-            if client:
-                print(
-                    "Warning: 'assembly.step' not found in local directory. Will attempt to download using API."
-                )
-            else:
-                print(
-                    "Warning: 'assembly.step' not found in local directory and no API credentials found."
-                )
-        if bom_path is None and (url_path / "bom.csv").exists():
-            bom_path = url_path / "bom.csv"
+    if export_configuration is None:
+        config_path = local_dir / "configuration.yaml"
+        if not config_path.exists():
+            raise RuntimeError(f"configuration.yaml not found in {local_dir}")
+        export_configuration = ExportConfiguration.load(config_path)
+        export_configuration.merge_cli_overrides(
+            name=config.name,
+            output=config.output,
+            visual_mesh_format=config.visual_mesh_format,
+        )
 
-        # Load mate values if available locally
-        mate_values = load_mate_values(url_path / "mate_values.json")
-        if not mate_values:
+    import pickle
+
+    print(f"Loading pre-fetched CAD data from {local_dir}...")
+    with open(local_dir / "cad.pickle", "rb") as f:
+        cad = pickle.load(f)
+
+    # In pre-fetched mode, we stay local unless assembly.step is missing.
+    if (local_dir / "assembly.step").exists():
+        asset_path = local_dir / "assembly.step"
+        client = None
+    elif (local_dir / "assembly.zip").exists():
+        asset_path = local_dir / "assembly.zip"
+        client = None
+    else:
+        asset_path = None
+        client = _try_get_client()
+        if client:
             print(
-                "Warning: No 'mate_values.json' found locally. Assuming zero configuration."
+                "Warning: 'assembly.step' not found in local directory. Will attempt to download using API."
+            )
+        else:
+            print(
+                "Warning: 'assembly.step' not found in local directory and no API credentials found."
             )
 
-    else:
-        client, cad = _get_client_and_cad(config.url, config.max_depth)
-        asset_path = None
+    if bom_path is None and (local_dir / "bom.csv").exists():
+        bom_path = local_dir / "bom.csv"
 
-        print(
-            "Warning: API mate value fetching is disabled. Generating default (zero) mate values."
-        )
-        print(
-            "To specify joint angles, use 'onshape2xacro fetch-cad', edit 'mate_values.json', and export locally."
-        )
-        mate_values = _generate_default_mate_values(cad)
+    mate_values = export_configuration.mate_values
 
     # 3. Build Kinematic Graph
     print("Building kinematic graph...")
@@ -150,7 +152,7 @@ def run_export(config: ExportConfig):
 
     # 4. Create Robot Model
     print("Creating robot model...")
-    robot_name = config.name or cad.name or "robot"
+    robot_name = export_configuration.export.name
     robot = CondensedRobot.from_graph(
         graph,
         cad=cad,
@@ -169,15 +171,18 @@ def run_export(config: ExportConfig):
     override = ConfigOverride.load(config.config)
 
     # 6. Serialize and Save
-    print(f"Serializing to {config.output}...")
+    output_path = export_configuration.export.output
+    visual_mesh_format = export_configuration.export.visual_mesh_format
+
+    print(f"Serializing to {output_path}...")
     serializer = XacroSerializer()
     serializer.save(
         robot,
-        str(config.output),
+        str(output_path),
         download_assets=True,
         config=override,
         bom_path=bom_path,
-        visual_mesh_format=config.visual_mesh_format,
+        visual_mesh_format=visual_mesh_format,
     )
     print("Export complete!")
 
