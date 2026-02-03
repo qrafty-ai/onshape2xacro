@@ -27,7 +27,7 @@ from OCP.gp import gp_Trsf
 from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from loguru import logger
 import trimesh
-import pymeshlab
+import coacd
 
 
 EXPORT_ID_REGEX = re.compile(
@@ -936,40 +936,48 @@ class StepMeshExporter:
                         print(f"Error creating visual mesh for {link_name}: {e}")
                         raise e
 
-                    collision_filenames: List[str] = []
-                    if collision_mesh_method == "fast":
+                    # 2. Collision: CoACD
+                    collision_filenames: List[str]
+                    try:
+                        # Load raw mesh for CoACD
+                        mesh_raw = trimesh.load(str(temp_stl), force="mesh")
+
+                        # Run CoACD
+                        parts = coacd.run_coacd(
+                            mesh_raw.vertices,
+                            mesh_raw.faces,
+                            threshold=0.05,
+                            max_convex_hulls=32,
+                            seed=42,
+                        )
+
+                        if not parts:
+                            raise RuntimeError("CoACD returned no parts")
+
+                        collision_list = []
+                        # Save each hull
+                        for i, (vs, fs) in enumerate(parts):
+                            hull_mesh = trimesh.Trimesh(vs, fs)
+                            hull_filename = f"collision/{link_name}_{i}.stl"
+                            hull_path = mesh_dir / hull_filename
+                            hull_mesh.export(hull_path)
+                            collision_list.append(hull_filename)
+
+                        if not collision_list:
+                            raise RuntimeError("CoACD produced empty hull list")
+
+                        collision_filenames = collision_list
+
+                    except Exception as e:
+                        print(
+                            f"CoACD failed for {link_name}: {e}. Falling back to raw STL."
+                        )
                         col_filename = f"collision/{link_name}_0.stl"
                         col_path = mesh_dir / col_filename
-                        try:
-                            ms = pymeshlab.MeshSet()
-                            ms.load_new_mesh(str(temp_stl))
-                            ms.generate_convex_hull()
-                            if ms.current_mesh().face_number() > 2000:
-                                ms.meshing_decimation_quadric_edge_collapse(
-                                    targetfacenum=2000
-                                )
-                            ms.save_current_mesh(str(col_path))
-                        except Exception as e:
-                            print(
-                                f"Error creating fast collision mesh for {link_name}: {e}"
-                            )
-                            import shutil
+                        import shutil
 
-                            shutil.copy(temp_stl, col_path)
-                        collision_filenames.append(col_filename)
-
-                    if not collision_filenames:
-                        try:
-                            col_filename = f"collision/{link_name}_0.stl"
-                            col_path = mesh_dir / col_filename
-                            import shutil
-
-                            shutil.copy(temp_stl, col_path)
-                            collision_filenames = [col_filename]
-
-                        except Exception as e:
-                            print(f"Error creating collision mesh for {link_name}: {e}")
-                            collision_filenames = [f"collision/{link_name}_0.stl"]
+                        shutil.copy(temp_stl, col_path)
+                        collision_filenames = [col_filename]
 
                     # Store both
                     mesh_map[link_name] = {
