@@ -187,7 +187,7 @@ def run_export(
         config=override,
         bom_path=bom_path,
         visual_mesh_format=visual_mesh_format,
-        collision_mesh_method=export_configuration.export.collision_mesh_method,
+        collision_option=export_configuration.export.collision_option,
     )
     print("Export complete!")
 

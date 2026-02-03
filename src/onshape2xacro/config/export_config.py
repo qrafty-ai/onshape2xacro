@@ -1,24 +1,39 @@
 from __future__ import annotations
 import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 from dataclasses import dataclass, field, asdict
 from typing import Literal
+
+
+@dataclass
+class CoACDOptions:
+    threshold: float = 0.05
+    resolution: int = 2000
+    max_convex_hull: int = 32
+    preprocess: bool = True
+    seed: int = 42
+
+
+@dataclass
+class CollisionOptions:
+    method: Literal["fast", "coacd"] = "fast"
+    coacd: CoACDOptions = field(default_factory=CoACDOptions)
 
 
 @dataclass
 class ExportOptions:
     name: str = "robot"
     visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
-    collision_mesh_method: Literal["fast", "coacd"] = "fast"
+    collision_option: CollisionOptions = field(default_factory=CollisionOptions)
     output: Path = field(default_factory=lambda: Path("output"))
 
 
 @dataclass
 class ExportConfiguration:
     export: ExportOptions = field(default_factory=ExportOptions)
-    mate_values: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    link_names: Dict[str, str] = field(default_factory=dict)
+    mate_values: dict[str, dict[str, Any]] = field(default_factory=dict)
+    link_names: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> ExportConfiguration:
@@ -31,6 +46,19 @@ class ExportConfiguration:
         export_data = data.get("export", {})
         if "output" in export_data:
             export_data["output"] = Path(export_data["output"])
+
+        collision_data = export_data.get("collision_option", {})
+        if "coacd" in collision_data:
+            collision_data["coacd"] = CoACDOptions(**collision_data["coacd"])
+
+        # Support old collision_mesh_method if present
+        if "collision_mesh_method" in export_data:
+            if "method" not in collision_data:
+                collision_data["method"] = export_data.pop("collision_mesh_method")
+            else:
+                export_data.pop("collision_mesh_method")
+
+        export_data["collision_option"] = CollisionOptions(**collision_data)
 
         return cls(
             export=ExportOptions(**export_data),
@@ -52,7 +80,7 @@ class ExportConfiguration:
         name: str | None = None,
         output: Path | None = None,
         visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None,
-        collision_mesh_method: Literal["fast", "coacd"] | None = None,
+        collision_method: Literal["fast", "coacd"] | None = None,
     ) -> None:
         if name:
             self.export.name = name
@@ -60,5 +88,5 @@ class ExportConfiguration:
             self.export.output = output
         if visual_mesh_format:
             self.export.visual_mesh_format = visual_mesh_format
-        if collision_mesh_method:
-            self.export.collision_mesh_method = collision_mesh_method
+        if collision_method:
+            self.export.collision_option.method = collision_method

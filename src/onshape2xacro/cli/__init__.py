@@ -51,19 +51,56 @@ def main():
                 raise RuntimeError(f"configuration.yaml not found in {config.path}")
 
             from onshape2xacro.config.export_config import ExportConfiguration
+            from onshape2xacro.schema import CoACDConfig, CollisionConfig
 
             export_config = ExportConfiguration.load(config_path)
-            export_config.merge_cli_overrides(
-                name=config.name,
-                output=config.output,
-                visual_mesh_format=config.visual_mesh_format,
-                collision_mesh_method=config.collision_mesh_method,
-            )
 
-            config.name = export_config.export.name
-            config.output = export_config.export.output
-            config.visual_mesh_format = export_config.export.visual_mesh_format
-            config.collision_mesh_method = export_config.export.collision_mesh_method
+            schema_export_defaults = ExportConfig(path=config.path)
+            collision_defaults = CollisionConfig()
+            schema_defaults = CoACDConfig()
+
+            for field_name in ["name", "output", "visual_mesh_format"]:
+                cli_val = getattr(config, field_name)
+                schema_default = getattr(schema_export_defaults, field_name)
+
+                if cli_val != schema_default:
+                    setattr(export_config.export, field_name, cli_val)
+                else:
+                    setattr(
+                        config, field_name, getattr(export_config.export, field_name)
+                    )
+
+            if config.collision_option.method != collision_defaults.method:
+                export_config.export.collision_option.method = (
+                    config.collision_option.method
+                )
+            else:
+                config.collision_option.method = (
+                    export_config.export.collision_option.method
+                )
+
+            for field_name in [
+                "threshold",
+                "resolution",
+                "max_convex_hull",
+                "preprocess",
+                "seed",
+            ]:
+                cli_val = getattr(config.collision_option.coacd, field_name)
+                schema_default = getattr(schema_defaults, field_name)
+
+                if cli_val != schema_default:
+                    setattr(
+                        export_config.export.collision_option.coacd, field_name, cli_val
+                    )
+                else:
+                    setattr(
+                        config.collision_option.coacd,
+                        field_name,
+                        getattr(
+                            export_config.export.collision_option.coacd, field_name
+                        ),
+                    )
 
             from onshape2xacro.pipeline import run_export
 
