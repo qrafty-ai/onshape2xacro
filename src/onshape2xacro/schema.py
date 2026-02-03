@@ -22,6 +22,8 @@ class ExportConfig:
     """Maximum subassembly traversal depth."""
     visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None
     """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
+    collision_mesh_method: Literal["fast", "coacd"] | None = None
+    """Method for collision mesh generation (fast, coacd). Defaults to fast."""
     debug: bool = False
     """Enable debug mode with full tracebacks."""
 
