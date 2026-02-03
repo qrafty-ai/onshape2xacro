@@ -1,9 +1,9 @@
 {
-  "active_plan": "/home/cc/.local/share/opencode/worktree/a935dd99c2c0f7886ed2ecba1e1971555239119a/jolly-island/.sisyphus/plans/coacd-tuning-config.md",
-  "started_at": "2026-02-03T22:15:00.000Z",
+  "active_plan": "/home/cc/.local/share/opencode/worktree/a935dd99c2c0f7886ed2ecba1e1971555239119a/jolly-island/.sisyphus/plans/cli-defaults-ux.md",
+  "started_at": "2026-02-03T22:30:00.000Z",
   "session_ids": [
-    "ses_3da75095bffeD4A47tG0yvS68i",
+    "ses_3da66954bffe0IhQy00AeRUKcD",
     "ses_3dad52fbfffei9LxMewLbQmqmD"
   ],
-  "plan_name": "coacd-tuning-config"
+  "plan_name": "cli-defaults-ux"
 }

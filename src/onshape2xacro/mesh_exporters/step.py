@@ -701,7 +701,10 @@ class StepMeshExporter:
             link_world = getattr(link, "frame_transform", None)
 
             # Scale CAD transform (meters) to STEP coordinate system (millimeters)
-            link_world_mm = link_world.copy()
+            if link_world is not None:
+                link_world_mm = link_world.copy()
+            else:
+                link_world_mm = np.eye(4)
             link_world_mm[:3, 3] *= 1000.0
             link_world_inv = np.linalg.inv(link_world_mm)
 
@@ -772,6 +775,8 @@ class StepMeshExporter:
                     part_path = tuple(part_path)
                 shape, color = _pick_shape(part_path)
 
+                inst_name = None
+                name_path = None
                 if shape is None:
                     inst_name = _instance_leaf_name(key)
                     shape, color = _pick_shape(inst_name)

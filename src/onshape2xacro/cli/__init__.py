@@ -51,6 +51,7 @@ def main():
                 raise RuntimeError(f"configuration.yaml not found in {config.path}")
 
             from onshape2xacro.config.export_config import ExportConfiguration
+            from onshape2xacro.schema import CoACDConfig, CollisionConfig
 
             export_config = ExportConfiguration.load(config_path)
             export_config.merge_cli_overrides(
@@ -61,6 +62,7 @@ def main():
             )
 
             # Sync CoACD options
+            schema_coacd_defaults = CoACDConfig()
             for field_name in [
                 "threshold",
                 "resolution",
@@ -69,11 +71,15 @@ def main():
                 "seed",
             ]:
                 cli_val = getattr(config.collision_option.coacd, field_name)
-                if cli_val is not None:
+                schema_default = getattr(schema_coacd_defaults, field_name)
+
+                if cli_val != schema_default:
+                    # CLI override
                     setattr(
                         export_config.export.collision_option.coacd, field_name, cli_val
                     )
                 else:
+                    # Sync config back from YAML (or project defaults)
                     setattr(
                         config.collision_option.coacd,
                         field_name,
@@ -82,12 +88,16 @@ def main():
                         ),
                     )
 
+            # Sync method back if it was the default
+            schema_collision_defaults = CollisionConfig()
+            if config.collision_option.method == schema_collision_defaults.method:
+                config.collision_option.method = (
+                    export_config.export.collision_option.method
+                )
+
             config.name = export_config.export.name
             config.output = export_config.export.output
             config.visual_mesh_format = export_config.export.visual_mesh_format
-            config.collision_option.method = (
-                export_config.export.collision_option.method
-            )
 
             from onshape2xacro.pipeline import run_export
 

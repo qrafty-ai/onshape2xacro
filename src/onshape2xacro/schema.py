@@ -8,15 +8,15 @@ import tyro
 class CoACDConfig:
     """Configuration for CoACD collision mesh generation."""
 
-    threshold: float | None = None
+    threshold: float = 0.05
     """Threshold for CoACD."""
-    resolution: int | None = None
+    resolution: int = 2000
     """Resolution for CoACD."""
-    max_convex_hull: int | None = None
+    max_convex_hull: int = 32
     """Maximum convex hull for CoACD."""
-    preprocess: bool | None = None
+    preprocess: bool = True
     """Preprocess for CoACD."""
-    seed: int | None = None
+    seed: int = 42
     """Seed for CoACD."""
 
 
@@ -24,7 +24,7 @@ class CoACDConfig:
 class CollisionConfig:
     """Configuration for collision mesh generation."""
 
-    method: Literal["fast", "coacd"] | None = None
+    method: Literal["fast", "coacd"] = "fast"
     """Method for collision mesh generation (fast, coacd). Defaults to fast."""
     coacd: CoACDConfig = field(default_factory=CoACDConfig)
     """CoACD specific configuration."""
