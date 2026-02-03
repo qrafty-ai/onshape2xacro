@@ -8,10 +8,10 @@ import onshape2xacro.pipeline as pipeline
 
 class MockCAD:
     def __init__(self):
-        self.document_id = "123"
-        self.element_id = "789"
+        self.document_id = "000000000000000000000123"
+        self.element_id = "000000000000000000000789"
         self.wtype = "w"
-        self.workspace_id = "456"
+        self.workspace_id = "000000000000000000000456"
         self.document_microversion = "mv1"
         self.name = "test_robot"
         self.max_depth = 5
@@ -27,7 +27,7 @@ class MockCAD:
 
 def test_full_config_workflow(monkeypatch, tmp_path):
     # 1. Mock fetch-cad to generate configuration.yaml and cad.pickle
-    url = "https://cad.onshape.com/documents/123/w/456/e/789"
+    url = "https://cad.onshape.com/documents/000000000000000000000123/w/000000000000000000000456/e/000000000000000000000789"
     local_dir = tmp_path / "cad_data"
 
     # Mock credentials
@@ -35,7 +35,8 @@ def test_full_config_workflow(monkeypatch, tmp_path):
 
     mock_cad = MockCAD()
     monkeypatch.setattr(
-        "onshape2xacro.pipeline.CAD.from_url", lambda *args, **kwargs: mock_cad
+        "onshape2xacro.optimized_cad.OptimizedCAD.from_url",
+        lambda *args, **kwargs: mock_cad,
     )
 
     class MockExporter:
@@ -148,7 +149,7 @@ def test_full_config_workflow(monkeypatch, tmp_path):
 
 def test_export_remote_url_deprecation(monkeypatch, tmp_path):
     # Use a non-existent path that looks like a URL
-    url = "https://cad.onshape.com/documents/123/w/456/e/789"
+    url = "https://cad.onshape.com/documents/000000000000000000000123/w/000000000000000000000456/e/000000000000000000000789"
     monkeypatch.setattr("sys.argv", ["onshape2xacro", "export", url])
 
     # We want run_export to raise the "Remote URL exports are deprecated" error.

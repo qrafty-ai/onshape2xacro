@@ -5,10 +5,10 @@ import pickle
 # Define MockCAD at module level so it can be pickled
 class MockCAD:
     def __init__(self):
-        self.document_id = "123"
-        self.element_id = "789"
+        self.document_id = "000000000000000000000123"
+        self.element_id = "000000000000000000000789"
         self.wtype = "w"
-        self.workspace_id = "456"
+        self.workspace_id = "000000000000000000000456"
         self.document_microversion = "mv1"
         self.name = "test_robot"
         self.max_depth = 5
@@ -27,7 +27,7 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     import onshape2xacro.pipeline as pipeline
 
     output_file = tmp_path / "cad.pkl"
-    url = "https://cad.onshape.com/documents/123/w/456/e/789"
+    url = "https://cad.onshape.com/documents/000000000000000000000123/w/000000000000000000000456/e/000000000000000000000789"
 
     # Mock credentials
     monkeypatch.setattr(pipeline, "get_credentials", lambda: ("access", "secret"))
@@ -35,9 +35,10 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     mock_cad = MockCAD()
 
     # Mock CAD.from_url
-    # pipeline.py imports CAD from onshape_robotics_toolkit
+    # pipeline.py imports OptimizedCAD from onshape2xacro.optimized_cad
     monkeypatch.setattr(
-        "onshape2xacro.pipeline.CAD.from_url", lambda *args, **kwargs: mock_cad
+        "onshape2xacro.optimized_cad.OptimizedCAD.from_url",
+        lambda *args, **kwargs: mock_cad,
     )
 
     # Mock StepMeshExporter to avoid API calls
@@ -82,10 +83,10 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     with open(output_file / "cad.pickle", "rb") as f:
         data = pickle.load(f)
 
-    assert data.document_id == "123"
-    assert data.element_id == "789"
+    assert data.document_id == "000000000000000000000123"
+    assert data.element_id == "000000000000000000000789"
     assert data.name == "test_robot"
-    assert data.workspace_id == "456"
+    assert data.workspace_id == "000000000000000000000456"
 
     # Verify configuration.yaml saved
     assert (output_file / "configuration.yaml").exists()
