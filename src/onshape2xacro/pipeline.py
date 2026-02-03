@@ -158,6 +158,7 @@ def run_export(
         cad=cad,
         name=robot_name,
         mate_values=mate_values,
+        link_name_overrides=export_configuration.link_names,
         # Pass fail_fast parameter derived from debug configuration
         fail_fast=getattr(config, "debug", False),
     )
