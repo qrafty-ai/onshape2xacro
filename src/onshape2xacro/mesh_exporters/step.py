@@ -954,6 +954,33 @@ class StepMeshExporter:
                                     )
                                     part_mesh.export(str(col_path))
                                     collision_filenames.append(col_filename)
+                        elif collision_mesh_method == "fast":
+                            col_filename = f"collision/{link_name}_0.stl"
+                            col_path = mesh_dir / col_filename
+                            try:
+                                import pymeshlab
+
+                                ms = pymeshlab.MeshSet()
+                                ms.load_new_mesh(str(temp_stl))
+
+                                # Generate Convex Hull
+                                ms.generate_convex_hull()
+
+                                # Simplify if needed (target 200 faces)
+                                if ms.current_mesh().face_number() > 2000:
+                                    ms.meshing_decimation_quadric_edge_collapse(
+                                        targetfacenum=2000,
+                                    )
+
+                                ms.save_current_mesh(str(col_path))
+                            except Exception as e:
+                                print(
+                                    f"Error creating fast collision mesh for {link_name}: {e}"
+                                )
+                                import shutil
+
+                                shutil.copy(temp_stl, col_path)
+                            collision_filenames.append(col_filename)
 
                         if not collision_filenames:
                             col_filename = f"collision/{link_name}_0.stl"

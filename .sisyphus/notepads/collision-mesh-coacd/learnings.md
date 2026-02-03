@@ -1,0 +1,9 @@
+- 2026-02-03: `uv add` updates `pyproject.toml`; `uv.lock` is gitignored here so it will not stage unless forced.
+- Updated XacroSerializer._link_to_xacro to handle List[str] for collision files, enabling multiple <collision> tags per link.
+- Updated type hints for mesh_map across XacroSerializer to include List[str] for collision file support.
+- The coacd.run_coacd API in version 1.0.7+ requires a coacd.Mesh object instead of separate vertices and faces.
+- The parameter name is max_convex_hull (singular) in the current coacd version.
+- The 'color_tool' logic was causing tests to fail because of incompatible mock arguments in .
+- Removing the logic fixed the test regression while keeping the CoACD collision decomposition.
+- The 'color_tool' logic was causing tests to fail because of incompatible mock arguments in tests/test_mesh_exporters/test_step.py.
+- Removing the logic fixed the test regression while keeping the CoACD collision decomposition.

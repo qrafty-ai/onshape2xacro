@@ -1,6 +1,9 @@
 {
-  "active_plan": "/home/cc/codes/onshape2xacro/.sisyphus/plans/export-config-system.md",
-  "started_at": "2026-02-03T05:24:25Z",
-  "session_ids": ["ses_3deb473f6ffe2lrwOuZNoIYK7R"],
-  "plan_name": "export-config-system"
+  "active_plan": "/home/cc/.local/share/opencode/worktree/a935dd99c2c0f7886ed2ecba1e1971555239119a/jolly-island/.sisyphus/plans/optional-collision-decomposition.md",
+  "started_at": "2026-02-03T21:35:00.000Z",
+  "session_ids": [
+    "ses_3da8e9199ffe2z6ihdcQR2nrJt",
+    "ses_3dad52fbfffei9LxMewLbQmqmD"
+  ],
+  "plan_name": "optional-collision-decomposition"
 }
