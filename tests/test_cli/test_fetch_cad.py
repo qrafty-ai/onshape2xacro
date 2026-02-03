@@ -54,9 +54,17 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
         "onshape2xacro.mesh_exporters.step.StepMeshExporter", MockExporter
     )
 
-    # Mock save_mate_values
-    mock_save = MagicMock()
-    monkeypatch.setattr("onshape2xacro.pipeline.save_mate_values", mock_save)
+    # Mock KinematicGraph and CondensedRobot
+    mock_graph = MagicMock()
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.KinematicGraph.from_cad", lambda *args: mock_graph
+    )
+    mock_robot = MagicMock()
+    mock_robot.nodes = ["link1", "link2"]
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.CondensedRobot.from_graph",
+        lambda *args, **kwargs: mock_robot,
+    )
 
     # Set CLI arguments
     test_args = ["onshape2xacro", "fetch-cad", url, "--output", str(output_file)]
@@ -79,6 +87,17 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     assert data.name == "test_robot"
     assert data.workspace_id == "456"
 
-    # Verify mate values saved
-    mock_save.assert_called_once()
-    assert (output_file / "mate_values.json").name == "mate_values.json"
+    # Verify configuration.yaml saved
+    assert (output_file / "configuration.yaml").exists()
+    import yaml
+
+    with open(output_file / "configuration.yaml", "r") as f:
+        config_data = yaml.safe_load(f)
+
+    assert "mate_values" in config_data
+    assert "link_names" in config_data
+    assert config_data["link_names"] == {"link1": "link1", "link2": "link2"}
+    assert config_data["export"]["name"] == "test_robot"
+
+    # Verify mate_values.json is NOT saved
+    assert not (output_file / "mate_values.json").exists()

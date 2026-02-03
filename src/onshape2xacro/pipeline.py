@@ -7,7 +7,6 @@ from onshape_robotics_toolkit.models.assembly import Occurrence
 from onshape2xacro.condensed_robot import CondensedRobot
 from onshape2xacro.mate_values import (
     load_mate_values,
-    save_mate_values,
 )
 from onshape2xacro.serializers import XacroSerializer
 from onshape2xacro.config import ConfigOverride
@@ -201,6 +200,7 @@ def run_fetch_cad(config: FetchCadConfig):
     import pickle
     import shutil
     from onshape2xacro.mesh_exporters.step import StepMeshExporter
+    from onshape2xacro.config.export_config import ExportConfiguration, ExportOptions
 
     client, cad = _get_client_and_cad(config.url, config.max_depth)
 
@@ -218,8 +218,24 @@ def run_fetch_cad(config: FetchCadConfig):
     print("Generating default mate values...")
     mate_values = _generate_default_mate_values(cad)
 
-    save_mate_values(output_dir / "mate_values.json", mate_values)
-    print(f"Saved mate values to {output_dir / 'mate_values.json'}")
+    # Build temporary robot to discover auto-generated link names
+    print("Building kinematic graph...")
+    graph = KinematicGraph.from_cad(cad)
+    print("Creating temporary robot model to discover link names...")
+    robot = CondensedRobot.from_graph(graph, cad=cad, mate_values=mate_values)
+    link_names = {name: name for name in robot.nodes}
+
+    config_path = output_dir / "configuration.yaml"
+    if config_path.exists():
+        print(f"Warning: {config_path} already exists. Skipping generation.")
+    else:
+        export_config = ExportConfiguration(
+            export=ExportOptions(name=cad.name or "robot"),
+            mate_values=mate_values,
+            link_names=link_names,
+        )
+        export_config.save(config_path)
+        print(f"Saved configuration to {config_path}")
 
     if config.bom:
         if not config.bom.exists():
