@@ -8,11 +8,11 @@ import tyro
 class CoACDConfig:
     """Configuration for CoACD collision mesh generation."""
 
-    threshold: float = 0.08
+    threshold: float = 0.05
     """Threshold for CoACD."""
-    resolution: int = 1000
+    resolution: int = 2000
     """Resolution for CoACD."""
-    max_convex_hull: int = 8
+    max_convex_hull: int = 32
     """Maximum convex hull for CoACD."""
     preprocess: bool = True
     """Preprocess for CoACD."""

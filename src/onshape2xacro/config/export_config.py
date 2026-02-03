@@ -8,9 +8,9 @@ from typing import Literal
 
 @dataclass
 class CoACDOptions:
-    threshold: float = 0.08
-    resolution: int = 1000
-    max_convex_hull: int = 8
+    threshold: float = 0.05
+    resolution: int = 2000
+    max_convex_hull: int = 32
     preprocess: bool = True
     seed: int = 42
 
