@@ -13,6 +13,7 @@ from onshape2xacro.condensed_robot import JointRecord
 
 if TYPE_CHECKING:
     from onshape_robotics_toolkit.robot import Robot
+    from onshape2xacro.inertia import InertiaReport
 
 
 def is_joint(name: str) -> bool:
@@ -62,6 +63,7 @@ class XacroSerializer(RobotSerializer):
         mesh_dir: Optional[str] = None,
         bom_path: Optional[Path] = None,
         visual_mesh_format: str = "obj",
+        collision_mesh_method: str = "fast",
         **options: Any,
     ):
         """Save robot to hierarchical xacro structure."""
@@ -83,39 +85,25 @@ class XacroSerializer(RobotSerializer):
         missing_meshes = {}
         computed_inertials = {}
 
-        # Prepare link records
-        link_records = {}
-        for _, data in robot.nodes(data=True):
-            link = data.get("link") or data.get("data")
-            if link:
-                link_records[sanitize_name(link.name)] = link
-
         if download_assets:
-            # We need to manually invoke exporter logic here to support BOM/inertials
-            client = getattr(robot, "client", None)
-            cad = getattr(robot, "cad", None)
-            asset_path = getattr(robot, "asset_path", None)
+            mesh_map, missing_meshes, report = self._export_meshes(
+                robot,
+                mesh_dir_path,
+                visual_mesh_format=visual_mesh_format,
+                bom_path=bom_path,
+                collision_mesh_method=collision_mesh_method,
+            )
 
-            if (client and cad) or (cad and asset_path):
-                exporter = StepMeshExporter(client, cad, asset_path=asset_path)
-                mesh_map, missing_meshes, report = exporter.export_link_meshes(
-                    link_records,
-                    mesh_dir_path,
-                    bom_path=bom_path,
-                    visual_mesh_format=visual_mesh_format,
-                    collision_mesh_method=options.get("collision_mesh_method", "fast"),
-                )
+            if report and report.link_properties:
+                for name, props in report.link_properties.items():
+                    computed_inertials[name] = props.to_yaml_dict()
 
-                if report and report.link_properties:
-                    for name, props in report.link_properties.items():
-                        computed_inertials[name] = props.to_yaml_dict()
+            if report:
+                report.print_summary()
 
-                if report:
-                    report.print_summary()
-
-                    if report.link_parts:
-                        debug_table_path = out_dir / "inertia_debug.md"
-                        report.save_debug_table(debug_table_path)
+                if report.link_parts:
+                    debug_table_path = out_dir / "inertia_debug.md"
+                    report.save_debug_table(debug_table_path)
 
         # 2. Group by subassembly (Stage 4)
         module_groups = self._group_by_subassembly(robot)
@@ -546,9 +534,16 @@ class XacroSerializer(RobotSerializer):
         root.append(joint_el)
 
     def _export_meshes(
-        self, robot: "Robot", mesh_dir: Path
+        self,
+        robot: "Robot",
+        mesh_dir: Path,
+        visual_mesh_format: str = "obj",
+        bom_path: Optional[Path] = None,
+        collision_mesh_method: str = "fast",
     ) -> tuple[
-        dict[str, str | dict[str, str | list[str]]], dict[str, list[dict[str, str]]]
+        dict[str, str | dict[str, str | list[str]]],
+        dict[str, list[dict[str, str]]],
+        Optional["InertiaReport"],
     ]:
         """Export meshes for robot links."""
         link_records: Dict[str, Any] = {}
@@ -565,12 +560,16 @@ class XacroSerializer(RobotSerializer):
         if (client and cad) or (cad and asset_path):
             exporter = StepMeshExporter(client, cad, asset_path=asset_path)
             # Pass link records instead of just keys
-            mesh_map, missing_meshes, _ = exporter.export_link_meshes(
-                link_records, mesh_dir
+            mesh_map, missing_meshes, report = exporter.export_link_meshes(
+                link_records,
+                mesh_dir,
+                bom_path=bom_path,
+                visual_mesh_format=visual_mesh_format,
+                collision_mesh_method=collision_mesh_method,
             )
-            return mesh_map, missing_meshes
+            return mesh_map, missing_meshes, report
 
-        return {}, {}
+        return {}, {}, None
 
     def _generate_default_configs(
         self,
