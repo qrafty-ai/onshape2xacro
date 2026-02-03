@@ -103,6 +103,7 @@ class XacroSerializer(RobotSerializer):
                     mesh_dir_path,
                     bom_path=bom_path,
                     visual_mesh_format=visual_mesh_format,
+                    collision_mesh_method=options.get("collision_mesh_method", "fast"),
                 )
 
                 if report and report.link_properties:
