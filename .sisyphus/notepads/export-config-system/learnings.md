@@ -33,3 +33,8 @@
   3. Verify intermediate artifacts (`configuration.yaml`).
   4. Programmatically modify intermediate artifacts to test the "human-in-the-loop" aspect.
   5. Run the second phase (`export`) and verify final output/side effects.
+## CLI Default Values and Priority Logic
+- Updated `schema.py` to set `visual_mesh_format` default to `obj`.
+- Refined `cli/__init__.py` to compare CLI values against `schema.py` defaults before overriding `configuration.yaml`.
+- Adopted priority: CLI (if changed) > configuration.yaml > Project Default.
+- Used `ExportConfig(path=config.path)` to obtain hardcoded defaults for comparison.

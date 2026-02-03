@@ -55,17 +55,22 @@ def main():
 
             export_config = ExportConfiguration.load(config_path)
 
-            schema_collision_defaults = CollisionConfig()
-            schema_coacd_defaults = CoACDConfig()
+            schema_export_defaults = ExportConfig(path=config.path)
+            collision_defaults = CollisionConfig()
+            schema_defaults = CoACDConfig()
 
-            if config.name is not None:
-                export_config.export.name = config.name
-            if config.output is not None:
-                export_config.export.output = config.output
-            if config.visual_mesh_format is not None:
-                export_config.export.visual_mesh_format = config.visual_mesh_format
+            for field_name in ["name", "output", "visual_mesh_format"]:
+                cli_val = getattr(config, field_name)
+                schema_default = getattr(schema_export_defaults, field_name)
 
-            if config.collision_option.method != schema_collision_defaults.method:
+                if cli_val != schema_default:
+                    setattr(export_config.export, field_name, cli_val)
+                else:
+                    setattr(
+                        config, field_name, getattr(export_config.export, field_name)
+                    )
+
+            if config.collision_option.method != collision_defaults.method:
                 export_config.export.collision_option.method = (
                     config.collision_option.method
                 )
@@ -82,7 +87,7 @@ def main():
                 "seed",
             ]:
                 cli_val = getattr(config.collision_option.coacd, field_name)
-                schema_default = getattr(schema_coacd_defaults, field_name)
+                schema_default = getattr(schema_defaults, field_name)
 
                 if cli_val != schema_default:
                     setattr(
@@ -96,10 +101,6 @@ def main():
                             export_config.export.collision_option.coacd, field_name
                         ),
                     )
-
-            config.name = export_config.export.name
-            config.output = export_config.export.output
-            config.visual_mesh_format = export_config.export.visual_mesh_format
 
             from onshape2xacro.pipeline import run_export
 

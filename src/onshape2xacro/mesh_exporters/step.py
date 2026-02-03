@@ -925,6 +925,8 @@ class StepMeshExporter:
                                         combined.export(str(temp_obj), file_type="obj")
 
                                         try:
+                                            import pymeshlab
+
                                             ms = pymeshlab.MeshSet()
                                             ms.load_new_mesh(str(temp_obj))
                                             ms.save_current_mesh(str(vis_path))

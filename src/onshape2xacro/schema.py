@@ -46,7 +46,7 @@ class ExportConfig:
     """Path to BOM CSV file for density lookup."""
     max_depth: int = 5
     """Maximum subassembly traversal depth."""
-    visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None
+    visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
     """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
     collision_option: CollisionConfig = field(default_factory=CollisionConfig)
     """Configuration for collision mesh generation."""
