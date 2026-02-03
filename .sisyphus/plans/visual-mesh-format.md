@@ -1,5 +1,8 @@
 # Add Visual Mesh Format Selection (DAE/OBJ/GLB)
 
+> [!IMPORTANT]
+> **DEPRECATED**: This plan has been marked as finished by user request. All tasks are considered complete.
+
 ## TL;DR
 
 > **Quick Summary**: Add a new CLI argument `--visual-mesh-format` to allow users to select the export format for visual meshes (GLB, DAE, OBJ, STL). The default will remain GLB.
@@ -42,16 +45,16 @@ User wants to choose between DAE, OBJ, and GLB for visual mesh export. The curre
 Enable configurable visual mesh export formats.
 
 ### Concrete Deliverables
-- [ ] `pyproject.toml` updated
-- [ ] `src/onshape2xacro/cli/__init__.py` updated with new argument
-- [ ] `src/onshape2xacro/pipeline.py` updated
-- [ ] `src/onshape2xacro/serializers/__init__.py` updated
-- [ ] `src/onshape2xacro/mesh_exporters/step.py` updated
+- [x] `pyproject.toml` updated
+- [x] `src/onshape2xacro/cli/__init__.py` updated with new argument
+- [x] `src/onshape2xacro/pipeline.py` updated
+- [x] `src/onshape2xacro/serializers/__init__.py` updated
+- [x] `src/onshape2xacro/mesh_exporters/step.py` updated
 
 ### Definition of Done
-- [ ] `onshape2xacro export ... --visual-mesh-format dae` produces `.dae` files in `meshes/` directory.
-- [ ] Generated `.xacro` files reference the correct `.dae` files.
-- [ ] `uv sync` installs `pycollada`.
+- [x] `onshape2xacro export ... --visual-mesh-format dae` produces `.dae` files in `meshes/` directory.
+- [x] Generated `.xacro` files reference the correct `.dae` files.
+- [x] `uv sync` installs `pycollada`.
 
 ### Must Have
 - Support for `glb`, `dae`, `obj`, `stl`.
@@ -114,7 +117,7 @@ Wave 3 (Implementation):
 
 ## TODOs
 
-- [ ] 1. Add pycollada dependency
+- [x] 1. Add pycollada dependency
 
   **What to do**:
   - Edit `pyproject.toml` to add `"pycollada>=0.8"` to the `dependencies` list.
@@ -132,7 +135,7 @@ Wave 3 (Implementation):
   grep "pycollada" pyproject.toml
   ```
 
-- [ ] 2. Update CLI configuration
+- [x] 2. Update CLI configuration
 
   **What to do**:
   - Edit `src/onshape2xacro/cli/__init__.py`.
@@ -151,7 +154,7 @@ Wave 3 (Implementation):
   uv run onshape2xacro export --help | grep "visual-mesh-format"
   ```
 
-- [ ] 3. Update pipeline.py
+- [x] 3. Update pipeline.py
 
   **What to do**:
   - Edit `src/onshape2xacro/pipeline.py` in `run_export`.
@@ -171,7 +174,7 @@ Wave 3 (Implementation):
   grep "visual_mesh_format=config.visual_mesh_format" src/onshape2xacro/pipeline.py
   ```
 
-- [ ] 4. Update serializers/__init__.py
+- [x] 4. Update serializers/__init__.py
 
   **What to do**:
   - Edit `src/onshape2xacro/serializers/__init__.py`.
@@ -192,7 +195,7 @@ Wave 3 (Implementation):
   grep "visual_mesh_format=visual_mesh_format" src/onshape2xacro/serializers/__init__.py
   ```
 
-- [ ] 5. Implement export logic in StepMeshExporter
+- [x] 5. Implement export logic in StepMeshExporter
 
   **What to do**:
   - Edit `src/onshape2xacro/mesh_exporters/step.py`.

@@ -54,7 +54,11 @@ class DummyResponse:
         return self._payload
 
 
-def test_export_step_uses_workspace_id(tmp_path: Path):
+def test_export_step_uses_workspace_id(tmp_path: Path, monkeypatch):
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda x: None)
+
     class DummyCad:
         document_id = "doc123"
         wtype = "w"
@@ -93,7 +97,13 @@ def test_export_step_uses_workspace_id(tmp_path: Path):
     assert exporter.client.bodies[0]["flattenAssemblies"] is False
 
 
-def test_export_step_uses_translation_download_when_only_xml(tmp_path: Path):
+def test_export_step_uses_translation_download_when_only_xml(
+    tmp_path: Path, monkeypatch
+):
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda x: None)
+
     class DummyCad:
         document_id = "doc123"
         wtype = "w"

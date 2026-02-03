@@ -134,6 +134,7 @@ class CondensedRobot(Robot):
         cad: CAD,
         name="robot",
         mate_values: Optional[Dict[str, Any]] = None,
+        link_name_overrides: Optional[Dict[str, str]] = None,
         fail_fast: bool = True,
     ):
         """
@@ -142,10 +143,13 @@ class CondensedRobot(Robot):
 
         Args:
             mate_values: Dictionary of mate values keyed by featureId.
+            link_name_overrides: Dictionary mapping generated link names to custom names.
             fail_fast: If True, raise exception on missing part transforms instead of warning.
         """
         if mate_values is None:
             mate_values = {}
+        if link_name_overrides is None:
+            link_name_overrides = {}
 
         # Build lookup for original mate entities to determine joint direction
         mate_id_to_orig = {}
@@ -189,6 +193,7 @@ class CondensedRobot(Robot):
         # Map group root to LinkRecord
         root_to_link_node = {}
         used_names = set()
+        override_to_generated = {}  # custom_name -> original_generated_name
 
         for group_root, group_nodes in groups.items():
 
@@ -247,6 +252,28 @@ class CondensedRobot(Robot):
                     suffix += 1
                     unique_name = f"{link_name}_{suffix}"
                 link_name = unique_name
+
+            # Apply overrides after basic name generation and de-duplication
+            generated_name = link_name
+            if generated_name in link_name_overrides:
+                custom_name = link_name_overrides[generated_name]
+
+                # Collision check: if custom name is already used (by another override or naturally)
+                if custom_name in used_names:
+                    if custom_name in override_to_generated:
+                        raise RuntimeError(
+                            f"Link name collision: Multiple links ('{override_to_generated[custom_name]}' "
+                            f"and '{generated_name}') are overridden to the same name '{custom_name}'"
+                        )
+                    else:
+                        raise RuntimeError(
+                            f"Link name collision: Custom name '{custom_name}' (for link '{generated_name}') "
+                            "is already used by another link."
+                        )
+
+                link_name = custom_name
+                override_to_generated[link_name] = generated_name
+
             used_names.add(link_name)
 
             parent = None

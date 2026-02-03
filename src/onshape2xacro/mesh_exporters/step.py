@@ -370,7 +370,7 @@ class StepMeshExporter:
                 break
             if state in {"FAILED", "CANCELED"}:
                 raise RuntimeError(f"STEP translation failed: {state}")
-            time.sleep(0.5)
+            time.sleep(5)
 
         external_ids = status.get("resultExternalDataIds") or []
         if not external_ids:
