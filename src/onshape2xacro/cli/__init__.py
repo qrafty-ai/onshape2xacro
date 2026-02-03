@@ -57,11 +57,13 @@ def main():
                 name=config.name,
                 output=config.output,
                 visual_mesh_format=config.visual_mesh_format,
+                collision_mesh_method=config.collision_mesh_method,
             )
 
             config.name = export_config.export.name
             config.output = export_config.export.output
             config.visual_mesh_format = export_config.export.visual_mesh_format
+            config.collision_mesh_method = export_config.export.collision_mesh_method
 
             from onshape2xacro.pipeline import run_export
 

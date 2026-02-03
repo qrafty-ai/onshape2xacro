@@ -26,6 +26,7 @@ def test_step_export_visual_formats(tmp_path):
         patch(
             "onshape2xacro.mesh_exporters.step.STEPCAFControl_Reader"
         ) as mock_reader_cls,
+        patch("onshape2xacro.mesh_exporters.step.XCAFDoc_DocumentTool"),
         patch("onshape2xacro.mesh_exporters.step.TDocStd_Document"),
         patch("onshape2xacro.mesh_exporters.step._get_shape_tool"),
         patch(
@@ -88,26 +89,55 @@ def test_step_export_visual_formats(tmp_path):
 
         # Actually, let's look at export_link_meshes. It calls _collect_shapes.
         # If we patch _collect_shapes, we can make it populate the dictionaries passed to it.
-        def populate_shapes(st, lbl, loc, shapes, locations, path=()):
+        def populate_shapes(st, ct, lbl, loc, shapes, locations, colors, path=()):
             shapes["part_key"] = [MagicMock()]
             locations["part_key"] = [MagicMock()]  # Mock TopLoc_Location
+            colors["part_key"] = [(0.1, 0.2, 0.3)]  # Mock color
 
-        with patch(
-            "onshape2xacro.mesh_exporters.step._collect_shapes",
-            side_effect=populate_shapes,
+        with (
+            patch(
+                "onshape2xacro.mesh_exporters.step._collect_shapes",
+                side_effect=populate_shapes,
+            ),
+            patch("trimesh.util.concatenate") as mock_concat,
+            patch("pymeshlab.MeshSet") as mock_mesh_set,
         ):
+            mock_concat.return_value = mock_mesh
             exporter.export_link_meshes(
                 link_records, mesh_dir, visual_mesh_format="dae"
             )
 
-        # Verify trimesh export called with dae
-        mock_mesh.export.assert_called_with(ANY, file_type="dae")
+            # Verify color was applied
+            # We need to capture the mesh object created by trimesh.load
+            # Since mock_trimesh_load returns mock_mesh, we can check if visual.face_colors was set
+            # But wait, trimesh.load returns a mesh. We create a NEW list of meshes.
+
+            # We should check that trimesh.util.concatenate was called with meshes having face_colors set
+            assert mock_concat.called
+            meshes_list = mock_concat.call_args[0][0]
+            assert len(meshes_list) == 1
+            # We can't easily verify the attribute set on a MagicMock unless we configure it,
+            # but verifying concatenate is called implies we went through the color path
+
+            # Verify DAE export logic:
+            # 1. Intermediate OBJ export via trimesh
+            mock_mesh.export.assert_called_with(ANY, file_type="obj")
+
+            # 2. PyMeshLab conversion
+            assert mock_mesh_set.called
+            ms_instance = mock_mesh_set.return_value
+            ms_instance.load_new_mesh.assert_called_with(ANY)  # Should load temp OBJ
+            ms_instance.save_current_mesh.assert_called_with(ANY)  # Should save DAE
 
         # Test OBJ export
-        with patch(
-            "onshape2xacro.mesh_exporters.step._collect_shapes",
-            side_effect=populate_shapes,
+        with (
+            patch(
+                "onshape2xacro.mesh_exporters.step._collect_shapes",
+                side_effect=populate_shapes,
+            ),
+            patch("trimesh.util.concatenate") as mock_concat,
         ):
+            mock_concat.return_value = mock_mesh
             exporter.export_link_meshes(
                 link_records, mesh_dir, visual_mesh_format="obj"
             )

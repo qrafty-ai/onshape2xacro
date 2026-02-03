@@ -10,6 +10,7 @@ from typing import Literal
 class ExportOptions:
     name: str = "robot"
     visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
+    collision_mesh_method: Literal["fast", "coacd"] = "fast"
     output: Path = field(default_factory=lambda: Path("output"))
 
 
@@ -51,6 +52,7 @@ class ExportConfiguration:
         name: str | None = None,
         output: Path | None = None,
         visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None,
+        collision_mesh_method: Literal["fast", "coacd"] | None = None,
     ) -> None:
         if name:
             self.export.name = name
@@ -58,3 +60,5 @@ class ExportConfiguration:
             self.export.output = output
         if visual_mesh_format:
             self.export.visual_mesh_format = visual_mesh_format
+        if collision_mesh_method:
+            self.export.collision_mesh_method = collision_mesh_method
