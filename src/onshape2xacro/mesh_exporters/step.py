@@ -12,9 +12,10 @@ from onshape_robotics_toolkit.connect import Client, HTTP
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TDocStd import TDocStd_Document
 from OCP.TCollection import TCollection_ExtendedString
-from OCP.XCAFDoc import XCAFDoc_DocumentTool
+from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ColorType
 from OCP.TDataStd import TDataStd_Name, TDataStd_NamedData
 from OCP.TDF import TDF_Label, TDF_LabelSequence
+from OCP.Quantity import Quantity_Color
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.TopLoc import TopLoc_Location
 from OCP.BRep import BRep_Builder
@@ -188,12 +189,42 @@ def _iter_components(shape_tool: Any, label: TDF_Label) -> Iterable[TDF_Label]:
             yield comps.Value(i + 1)
 
 
+def _get_color(
+    color_tool: Any, label: TDF_Label, shape: Any
+) -> Optional[Tuple[float, float, float]]:
+    if color_tool is None:
+        return None
+
+    color = Quantity_Color()
+
+    # Try getting color from label (surface)
+    try:
+        if color_tool.GetColor(label, XCAFDoc_ColorType.XCAFDoc_ColorSurf, color):
+            return (color.Red(), color.Green(), color.Blue())
+    except Exception:
+        pass
+
+    # Try getting color from shape (surface)
+    try:
+        if not shape.IsNull():
+            if color_tool.GetColor(shape, XCAFDoc_ColorType.XCAFDoc_ColorSurf, color):
+                return (color.Red(), color.Green(), color.Blue())
+            if color_tool.GetColor(shape, XCAFDoc_ColorType.XCAFDoc_ColorGen, color):
+                return (color.Red(), color.Green(), color.Blue())
+    except Exception:
+        pass
+
+    return None
+
+
 def _collect_shapes(
     shape_tool: Any,
+    color_tool: Any,
     label: TDF_Label,
     parent_loc: TopLoc_Location,
     part_shapes: Dict[Any, Any],
     part_locations: Dict[Any, TopLoc_Location],
+    part_colors: Dict[Any, Any],
     current_path: Tuple[str, ...] = (),
 ):
     is_assembly = getattr(shape_tool, "IsAssembly_s", None)
@@ -218,20 +249,24 @@ def _collect_shapes(
                 new_path = current_path + (occ_id,) if occ_id else current_path
                 _collect_shapes(
                     shape_tool,
+                    color_tool,
                     ref_label,
                     comp_loc,
                     part_shapes,
                     part_locations,
+                    part_colors,
                     new_path,
                 )
             else:
                 # If no reference, just recurse on the component itself
                 _collect_shapes(
                     shape_tool,
+                    color_tool,
                     comp,
                     comp_loc,
                     part_shapes,
                     part_locations,
+                    part_colors,
                     current_path,
                 )
         return
@@ -255,12 +290,17 @@ def _collect_shapes(
     if shape.IsNull():
         return
 
+    # Get color
+    rgb = _get_color(color_tool, shape_label, shape)
+
     # Store by full occurrence path (tuple of IDs)
     if current_path not in part_shapes:
         part_shapes[current_path] = []
         part_locations[current_path] = []
+        part_colors[current_path] = []
     part_shapes[current_path].append(shape)
     part_locations[current_path].append(parent_loc)
+    part_colors[current_path].append(rgb)
 
     # Also store by individual part ID and occurrence ID for fallbacks
     parsed_id = _get_occurrence_id(label) or _get_occurrence_id(shape_label)
@@ -268,19 +308,23 @@ def _collect_shapes(
         if parsed_id not in part_shapes:
             part_shapes[parsed_id] = []
             part_locations[parsed_id] = []
+            part_colors[parsed_id] = []
         # Avoid adding the same shape twice if parsed_id == current_path (not likely but safe)
         if isinstance(part_shapes[parsed_id], list):
             part_shapes[parsed_id].append(shape)
             part_locations[parsed_id].append(parent_loc)
+            part_colors[parsed_id].append(rgb)
 
     label_name = _label_name(label) or _label_name(shape_label)
     if label_name:
         if label_name not in part_shapes:
             part_shapes[label_name] = []
             part_locations[label_name] = []
+            part_colors[label_name] = []
         if isinstance(part_shapes[label_name], list):
             part_shapes[label_name].append(shape)
             part_locations[label_name].append(parent_loc)
+            part_colors[label_name].append(rgb)
 
 
 def _get_free_shape_labels(shape_tool: Any) -> TDF_LabelSequence:
@@ -521,17 +565,33 @@ class StepMeshExporter:
             raise RuntimeError("STEP transfer failed")
 
         shape_tool = _get_shape_tool(doc)
+
+        # Initialize color tool
+        color_tool = getattr(XCAFDoc_DocumentTool, "ColorTool_s", None)
+        if callable(color_tool):
+            color_tool = color_tool(doc.Main())
+        else:
+            color_tool = getattr(XCAFDoc_DocumentTool, "ColorTool", None)
+            if callable(color_tool):
+                color_tool = color_tool(doc.Main())
+            else:
+                color_tool = None
+
         labels = _get_free_shape_labels(shape_tool)
 
         part_shapes: Dict[Any, Any] = {}
         part_locations: Dict[Any, TopLoc_Location] = {}
+        part_colors: Dict[Any, Any] = {}
+
         for i in range(labels.Length()):
             _collect_shapes(
                 shape_tool,
+                color_tool,
                 labels.Value(i + 1),
                 TopLoc_Location(),
                 part_shapes,
                 part_locations,
+                part_colors,
             )
 
         has_occurrence_ids = any(
@@ -627,6 +687,9 @@ class StepMeshExporter:
             has_valid_shapes = False
             part_metadata_list: List[Dict[str, str]] = []
 
+            # Keep track of individual parts for colored visual export
+            visual_parts: List[Tuple[Any, Optional[Tuple[float, float, float]]]] = []
+
             part_names_list = getattr(link, "part_names", [])
             used_indices: Dict[Any, int] = {}
 
@@ -642,7 +705,9 @@ class StepMeshExporter:
                 def _pick_shape(match_key: Any):
                     shapes = part_shapes.get(match_key)
                     if not shapes:
-                        return None
+                        return None, None
+
+                    colors = part_colors.get(match_key)
 
                     locs = part_locations.get(match_key)
                     if locs and len(shapes) > 1:
@@ -667,34 +732,36 @@ class StepMeshExporter:
 
                         # Tolerance check: 1mm error allowed (3mm distance)
                         if best_idx >= 0 and min_dist < 100.0:
-                            return shapes[best_idx]
+                            return shapes[best_idx], colors[
+                                best_idx
+                            ] if colors else None
 
                     # Fallback to sequential index
                     shape_idx = used_indices.get(match_key, 0)
                     shape_idx = min(shape_idx, len(shapes) - 1)
                     used_indices[match_key] = shape_idx + 1
-                    return shapes[shape_idx]
+                    return shapes[shape_idx], colors[shape_idx] if colors else None
 
                 part_path = getattr(key, "path", None)
                 if part_path:
                     part_path = tuple(part_path)
-                shape = _pick_shape(part_path)
+                shape, color = _pick_shape(part_path)
 
                 if shape is None:
                     inst_name = _instance_leaf_name(key)
-                    shape = _pick_shape(inst_name)
+                    shape, color = _pick_shape(inst_name)
 
                 if shape is None:
                     name_path = _name_path_for_key(key)
-                    shape = _pick_shape(name_path)
+                    shape, color = _pick_shape(name_path)
 
                 if shape is None:
                     leaf_name = _normalized_leaf_name(name_path)
-                    shape = _pick_shape(leaf_name)
+                    shape, color = _pick_shape(leaf_name)
 
                 if shape is None:
                     part_id = getattr(part, "partId", str(key))
-                    shape = _pick_shape(part_id)
+                    shape, color = _pick_shape(part_id)
 
                 if shape is None:
                     link_missing_parts.append(
@@ -717,6 +784,7 @@ class StepMeshExporter:
                 transformed = BRepBuilderAPI_Transform(shape, trsf, True).Shape()
                 builder.Add(compound, transformed)
                 has_valid_shapes = True
+                visual_parts.append((transformed, color))
 
                 part_name_from_list = (
                     part_names_list[idx] if idx < len(part_names_list) else None
@@ -778,14 +846,54 @@ class StepMeshExporter:
 
                             shutil.copy(temp_stl, vis_path)
                         else:
-                            mesh = trimesh.load(str(temp_stl), force="mesh")
+                            # Use trimesh to combine parts with colors
+                            meshes_to_merge = []
 
-                            if visual_mesh_format == "dae":
-                                mesh.export(vis_path, file_type="dae")
-                            elif visual_mesh_format == "obj":
-                                mesh.export(vis_path, file_type="obj")
+                            # If no parts have color, we can just load the compound STL (faster)
+                            # But if at least one has color, we should process all to match structure
+                            has_colors = any(c is not None for _, c in visual_parts)
+
+                            if not has_colors:
+                                # Fast path
+                                mesh = trimesh.load(str(temp_stl), force="mesh")
+                                if visual_mesh_format == "dae":
+                                    mesh.export(vis_path, file_type="dae")
+                                elif visual_mesh_format == "obj":
+                                    mesh.export(vis_path, file_type="obj")
+                                else:
+                                    mesh.export(vis_path)
                             else:
-                                mesh.export(vis_path)
+                                for i, (part_shape, part_color) in enumerate(
+                                    visual_parts
+                                ):
+                                    # Export part_shape to temp STL
+                                    part_stl_path = (
+                                        mesh_dir / f"{link_name}_part_{i}.stl"
+                                    )
+                                    stl_writer.Write(part_shape, str(part_stl_path))
+
+                                    part_mesh = trimesh.load(
+                                        str(part_stl_path), force="mesh"
+                                    )
+                                    part_stl_path.unlink()
+
+                                    if part_color:
+                                        # part_color is (R, G, B) 0.0-1.0
+                                        rgba = [int(c * 255) for c in part_color] + [
+                                            255
+                                        ]
+                                        part_mesh.visual.face_colors = rgba
+
+                                    meshes_to_merge.append(part_mesh)
+
+                                if meshes_to_merge:
+                                    combined = trimesh.util.concatenate(meshes_to_merge)
+                                    if visual_mesh_format == "dae":
+                                        combined.export(vis_path, file_type="dae")
+                                    elif visual_mesh_format == "obj":
+                                        combined.export(vis_path, file_type="obj")
+                                    else:
+                                        combined.export(vis_path)
 
                     except Exception as e:
                         print(f"Error creating visual mesh for {link_name}: {e}")
