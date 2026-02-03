@@ -645,6 +645,19 @@ class XacroSerializer(RobotSerializer):
                             "iyz": 0,
                         },
                     }
+
+                    # If the link has no parts (virtual frame), use negligible mass
+                    if not link.part_ids:
+                        default_inertial["mass"] = 1e-9
+                        default_inertial["inertia"] = {
+                            "ixx": 1e-9,
+                            "iyy": 1e-9,
+                            "izz": 1e-9,
+                            "ixy": 0,
+                            "ixz": 0,
+                            "iyz": 0,
+                        }
+
                     inertials[name] = config.get_inertial(name, default_inertial)
 
         with open(config_dir / "joint_limits.yaml", "w") as f:

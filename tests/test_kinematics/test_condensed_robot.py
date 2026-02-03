@@ -222,3 +222,79 @@ def test_condensed_robot_fail_fast():
 
     with pytest.raises(RuntimeError, match="Could not find part"):
         CondensedRobot.from_graph(graph, cad=cad, fail_fast=True)
+
+
+def test_condensed_robot_virtual_frames():
+    """Test generation of virtual links from frame_* mate connectors."""
+    graph = MagicMock()
+
+    # Setup simple graph with one link "base"
+    class MockNode:
+        def __init__(self, id, name):
+            self.id = id
+            self.part_id = f"p_{id}"
+            self.path = [f"occ_{id}"]  # Add path for to_id_tuple
+            self.occurrence = [f"occ_{id}"]  # List to match typical path
+            self.part_name = name
+            self.parent = None
+
+    node_base = MockNode("base", "BasePart")
+    graph.nodes = [node_base]
+    graph.edges = []  # No joints initially
+
+    # Mock CAD
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+
+    # Mock PathKey
+    pk_base = MagicMock()
+    pk_base.path = tuple(node_base.occurrence)
+
+    # Mock keys_by_id
+    cad.keys_by_id = {tuple(node_base.occurrence): pk_base}
+
+    # Mock Mate Connectors
+    mc_valid = MagicMock()
+    mc_valid.name = "frame_tcp"
+    mc_valid.occurrence = node_base.occurrence
+    mc_valid.mateConnectorCS.to_tf = np.eye(4)
+    mc_valid.mateConnectorCS.to_tf[0, 3] = 0.1
+
+    mc_ignored_name = MagicMock()
+    mc_ignored_name.name = "mate_connector_1"  # No frame_ prefix
+
+    mc_no_occ = MagicMock()
+    mc_no_occ.name = "frame_broken"
+    mc_no_occ.occurrence = None
+
+    mc_unknown_occ = MagicMock()
+    mc_unknown_occ.name = "frame_unknown"
+    mc_unknown_occ.occurrence = ["occ_unknown"]
+
+    # Add a mock link that won't be in the graph to test "Parent link not found" (harder to mock with current setup, skipping)
+
+    cad.mate_connectors = [mc_valid, mc_ignored_name, mc_no_occ, mc_unknown_occ]
+
+    # Run
+    robot = CondensedRobot.from_graph(graph, cad=cad, name="TestRobot")
+
+    # Verify
+    nodes = list(robot.nodes(data=True))
+    link_names = [data["link"].name for _, data in nodes]
+    assert "basepart" in link_names
+    assert "frame_tcp" in link_names
+    assert "mate_connector_1" not in link_names
+    assert "frame_broken" not in link_names
+    assert "frame_unknown" not in link_names
+
+    # Verify Joint for valid frame
+    edges = list(robot.edges(data=True))
+    assert len(edges) == 1
+    u, v, data = edges[0]
+
+    joint = data["joint"]
+    assert joint.parent == "basepart"
+    assert joint.child == "frame_tcp"
+    assert joint.joint_type == "fixed"
+    assert joint.name == "fixed_frame_tcp"
+    assert np.allclose(joint.origin.xyz, [0.1, 0.0, 0.0])
