@@ -28,6 +28,7 @@ from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from loguru import logger
 import trimesh
 import coacd
+from onshape2xacro.config.export_config import CollisionOptions
 
 
 EXPORT_ID_REGEX = re.compile(
@@ -515,7 +516,7 @@ class StepMeshExporter:
         mesh_dir: Path,
         bom_path: Optional[Path] = None,
         visual_mesh_format: str = "obj",
-        collision_mesh_method: str = "fast",
+        collision_option: Optional[CollisionOptions] = None,
     ) -> Tuple[
         Dict[str, str | Dict[str, str | List[str]]],
         Dict[str, List[Dict[str, str]]],
@@ -538,6 +539,9 @@ class StepMeshExporter:
         mesh_dir.mkdir(parents=True, exist_ok=True)
         (mesh_dir / "visual").mkdir(parents=True, exist_ok=True)
         (mesh_dir / "collision").mkdir(parents=True, exist_ok=True)
+
+        if collision_option is None:
+            collision_option = CollisionOptions(method="fast")
 
         report = None
         calc = None
@@ -938,11 +942,15 @@ class StepMeshExporter:
 
                     try:
                         collision_filenames = []
-                        if collision_mesh_method == "coacd":
+                        if collision_option.method == "coacd":
                             mesh = trimesh.load(str(temp_stl), force="mesh")
                             coacd_mesh = coacd.Mesh(mesh.vertices, mesh.faces)
                             parts = coacd.run_coacd(
-                                coacd_mesh, threshold=0.05, max_convex_hull=32, seed=42
+                                coacd_mesh,
+                                threshold=collision_option.coacd.threshold,
+                                max_convex_hull=collision_option.coacd.max_convex_hull,
+                                resolution=collision_option.coacd.resolution,
+                                seed=collision_option.coacd.seed,
                             )
 
                             if parts:
@@ -954,7 +962,7 @@ class StepMeshExporter:
                                     )
                                     part_mesh.export(str(col_path))
                                     collision_filenames.append(col_filename)
-                        elif collision_mesh_method == "fast":
+                        elif collision_option.method == "fast":
                             col_filename = f"collision/{link_name}_0.stl"
                             col_path = mesh_dir / col_filename
                             try:

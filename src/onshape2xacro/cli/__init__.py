@@ -57,13 +57,37 @@ def main():
                 name=config.name,
                 output=config.output,
                 visual_mesh_format=config.visual_mesh_format,
-                collision_mesh_method=config.collision_mesh_method,
+                collision_method=config.collision_option.method,
             )
+
+            # Sync CoACD options
+            for field_name in [
+                "threshold",
+                "resolution",
+                "max_convex_hull",
+                "preprocess",
+                "seed",
+            ]:
+                cli_val = getattr(config.collision_option.coacd, field_name)
+                if cli_val is not None:
+                    setattr(
+                        export_config.export.collision_option.coacd, field_name, cli_val
+                    )
+                else:
+                    setattr(
+                        config.collision_option.coacd,
+                        field_name,
+                        getattr(
+                            export_config.export.collision_option.coacd, field_name
+                        ),
+                    )
 
             config.name = export_config.export.name
             config.output = export_config.export.output
             config.visual_mesh_format = export_config.export.visual_mesh_format
-            config.collision_mesh_method = export_config.export.collision_mesh_method
+            config.collision_option.method = (
+                export_config.export.collision_option.method
+            )
 
             from onshape2xacro.pipeline import run_export
 

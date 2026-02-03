@@ -1,7 +1,33 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Union, Literal
 import tyro
+
+
+@dataclass
+class CoACDConfig:
+    """Configuration for CoACD collision mesh generation."""
+
+    threshold: float | None = None
+    """Threshold for CoACD."""
+    resolution: int | None = None
+    """Resolution for CoACD."""
+    max_convex_hull: int | None = None
+    """Maximum convex hull for CoACD."""
+    preprocess: bool | None = None
+    """Preprocess for CoACD."""
+    seed: int | None = None
+    """Seed for CoACD."""
+
+
+@dataclass
+class CollisionConfig:
+    """Configuration for collision mesh generation."""
+
+    method: Literal["fast", "coacd"] | None = None
+    """Method for collision mesh generation (fast, coacd). Defaults to fast."""
+    coacd: CoACDConfig = field(default_factory=CoACDConfig)
+    """CoACD specific configuration."""
 
 
 @dataclass
@@ -22,8 +48,8 @@ class ExportConfig:
     """Maximum subassembly traversal depth."""
     visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None
     """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
-    collision_mesh_method: Literal["fast", "coacd"] | None = None
-    """Method for collision mesh generation (fast, coacd). Defaults to fast."""
+    collision_option: CollisionConfig = field(default_factory=CollisionConfig)
+    """Configuration for collision mesh generation."""
     debug: bool = False
     """Enable debug mode with full tracebacks."""
 

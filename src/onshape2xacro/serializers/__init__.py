@@ -7,6 +7,7 @@ import yaml
 
 from onshape_robotics_toolkit.formats.base import RobotSerializer
 from onshape2xacro.config import ConfigOverride
+from onshape2xacro.config.export_config import CollisionOptions
 from onshape2xacro.naming import sanitize_name
 from onshape2xacro.mesh_exporters.step import StepMeshExporter
 from onshape2xacro.condensed_robot import JointRecord
@@ -63,7 +64,7 @@ class XacroSerializer(RobotSerializer):
         mesh_dir: Optional[str] = None,
         bom_path: Optional[Path] = None,
         visual_mesh_format: str = "obj",
-        collision_mesh_method: str = "fast",
+        collision_option: Optional[CollisionOptions] = None,
         **options: Any,
     ):
         """Save robot to hierarchical xacro structure."""
@@ -91,7 +92,7 @@ class XacroSerializer(RobotSerializer):
                 mesh_dir_path,
                 visual_mesh_format=visual_mesh_format,
                 bom_path=bom_path,
-                collision_mesh_method=collision_mesh_method,
+                collision_option=collision_option,
             )
 
             if report and report.link_properties:
@@ -539,7 +540,7 @@ class XacroSerializer(RobotSerializer):
         mesh_dir: Path,
         visual_mesh_format: str = "obj",
         bom_path: Optional[Path] = None,
-        collision_mesh_method: str = "fast",
+        collision_option: Optional[CollisionOptions] = None,
     ) -> tuple[
         dict[str, str | dict[str, str | list[str]]],
         dict[str, list[dict[str, str]]],
@@ -565,7 +566,7 @@ class XacroSerializer(RobotSerializer):
                 mesh_dir,
                 bom_path=bom_path,
                 visual_mesh_format=visual_mesh_format,
-                collision_mesh_method=collision_mesh_method,
+                collision_option=collision_option,
             )
             return mesh_map, missing_meshes, report
 
