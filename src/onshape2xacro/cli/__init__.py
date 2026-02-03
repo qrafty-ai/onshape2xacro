@@ -39,6 +39,13 @@ def main():
         config = parse_args()
 
         if isinstance(config, ExportConfig):
+            if not config.path.is_dir() or not (config.path / "cad.pickle").exists():
+                raise RuntimeError(
+                    f"Local directory {config.path} is invalid or missing cad.pickle. "
+                    "Remote URL exports are deprecated for 'export' command. "
+                    "Use 'fetch-cad' first."
+                )
+
             config_path = config.path / "configuration.yaml"
             if not config_path.exists():
                 raise RuntimeError(f"configuration.yaml not found in {config.path}")
