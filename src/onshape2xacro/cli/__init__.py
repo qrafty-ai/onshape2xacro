@@ -54,15 +54,26 @@ def main():
             from onshape2xacro.schema import CoACDConfig, CollisionConfig
 
             export_config = ExportConfiguration.load(config_path)
-            export_config.merge_cli_overrides(
-                name=config.name,
-                output=config.output,
-                visual_mesh_format=config.visual_mesh_format,
-                collision_method=config.collision_option.method,
-            )
 
-            # Sync CoACD options
+            schema_collision_defaults = CollisionConfig()
             schema_coacd_defaults = CoACDConfig()
+
+            if config.name is not None:
+                export_config.export.name = config.name
+            if config.output is not None:
+                export_config.export.output = config.output
+            if config.visual_mesh_format is not None:
+                export_config.export.visual_mesh_format = config.visual_mesh_format
+
+            if config.collision_option.method != schema_collision_defaults.method:
+                export_config.export.collision_option.method = (
+                    config.collision_option.method
+                )
+            else:
+                config.collision_option.method = (
+                    export_config.export.collision_option.method
+                )
+
             for field_name in [
                 "threshold",
                 "resolution",
@@ -74,12 +85,10 @@ def main():
                 schema_default = getattr(schema_coacd_defaults, field_name)
 
                 if cli_val != schema_default:
-                    # CLI override
                     setattr(
                         export_config.export.collision_option.coacd, field_name, cli_val
                     )
                 else:
-                    # Sync config back from YAML (or project defaults)
                     setattr(
                         config.collision_option.coacd,
                         field_name,
@@ -87,13 +96,6 @@ def main():
                             export_config.export.collision_option.coacd, field_name
                         ),
                     )
-
-            # Sync method back if it was the default
-            schema_collision_defaults = CollisionConfig()
-            if config.collision_option.method == schema_collision_defaults.method:
-                config.collision_option.method = (
-                    export_config.export.collision_option.method
-                )
 
             config.name = export_config.export.name
             config.output = export_config.export.output
