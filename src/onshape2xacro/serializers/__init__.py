@@ -406,7 +406,7 @@ class XacroSerializer(RobotSerializer):
         root: ET._Element,
         link: Any,
         config: ConfigOverride,
-        mesh_map: Dict[str, str | Dict[str, str]],
+        mesh_map: Dict[str, str | Dict[str, str | List[str]]],
         mesh_rel_path: str = "meshes",
     ):
         name = sanitize_name(link.name)
@@ -449,15 +449,24 @@ class XacroSerializer(RobotSerializer):
                 collision_file = entry
 
             for tag in ["visual", "collision"]:
-                el = ET.SubElement(link_el, tag)
-                # Identity origin for baked meshes
-                ET.SubElement(el, "origin", xyz="0 0 0", rpy="0 0 0")
-                geom = ET.SubElement(el, "geometry")
-                mesh = ET.SubElement(geom, "mesh")
+                files_to_add = []
+                if tag == "visual":
+                    files_to_add = [visual_file]
+                else:
+                    if isinstance(collision_file, list):
+                        files_to_add = collision_file
+                    else:
+                        files_to_add = [collision_file]
 
-                filename = visual_file if tag == "visual" else collision_file
-                mesh.set("filename", f"{mesh_rel_path}/{filename}")
-                mesh.set("scale", "0.001 0.001 0.001")
+                for filename in files_to_add:
+                    el = ET.SubElement(link_el, tag)
+                    # Identity origin for baked meshes
+                    ET.SubElement(el, "origin", xyz="0 0 0", rpy="0 0 0")
+                    geom = ET.SubElement(el, "geometry")
+                    mesh = ET.SubElement(geom, "mesh")
+
+                    mesh.set("filename", f"{mesh_rel_path}/{filename}")
+                    mesh.set("scale", "0.001 0.001 0.001")
 
     def _joint_to_xacro(
         self,
@@ -537,7 +546,9 @@ class XacroSerializer(RobotSerializer):
 
     def _export_meshes(
         self, robot: "Robot", mesh_dir: Path
-    ) -> tuple[dict[str, str | dict[str, str]], dict[str, list[dict[str, str]]]]:
+    ) -> tuple[
+        dict[str, str | dict[str, str | list[str]]], dict[str, list[dict[str, str]]]
+    ]:
         """Export meshes for robot links."""
         link_records: Dict[str, Any] = {}
         for _, data in robot.nodes(data=True):

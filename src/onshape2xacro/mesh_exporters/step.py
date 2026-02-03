@@ -28,6 +28,7 @@ from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from loguru import logger
 import trimesh
 import pymeshlab
+import coacd
 
 
 EXPORT_ID_REGEX = re.compile(
@@ -496,7 +497,7 @@ class StepMeshExporter:
         bom_path: Optional[Path] = None,
         visual_mesh_format: str = "obj",
     ) -> Tuple[
-        Dict[str, str | Dict[str, str]],
+        Dict[str, str | Dict[str, str | List[str]]],
         Dict[str, List[Dict[str, str]]],
         Optional["InertiaReport"],
     ]:
@@ -504,7 +505,7 @@ class StepMeshExporter:
 
         Returns:
             Tuple of (mesh_map, missing_meshes, inertia_report) where:
-            - mesh_map: Dict mapping link_name -> stl filename
+            - mesh_map: Dict mapping link_name -> {"visual": path, "collision": path or [paths]}
             - missing_meshes: Dict mapping link_name -> list of missing part info dicts
             - inertia_report: Optional InertiaReport containing computed mass properties
         """
@@ -899,42 +900,75 @@ class StepMeshExporter:
                         print(f"Error creating visual mesh for {link_name}: {e}")
                         raise e
 
-                    # 2. Collision: Simplified (using pymeshlab)
-                    col_filename = f"collision/{link_name}.stl"
-                    col_path = mesh_dir / col_filename
-
+                    # 2. Collision: CoACD
+                    collision_filenames: List[str] | str
                     try:
-                        ms = pymeshlab.MeshSet()
-                        ms.load_new_mesh(str(temp_stl))
+                        # Load raw mesh for CoACD
+                        mesh_raw = trimesh.load(str(temp_stl), force="mesh")
+                        coacd_mesh = coacd.Mesh(mesh_raw.vertices, mesh_raw.faces)
 
-                        # Generate Convex Hull
-                        ms.generate_convex_hull()
+                        # Run CoACD
+                        parts = coacd.run_coacd(
+                            coacd_mesh,
+                            threshold=0.05,
+                            max_convex_hull=32,
+                            seed=42,
+                        )
 
-                        # Simplify if needed (target 200 faces)
-                        if ms.current_mesh().face_number() > 2000:
-                            ms.meshing_decimation_quadric_edge_collapse(
-                                targetfacenum=2000,
-                            )
+                        collision_list = []
+                        # Save each hull
+                        for i, (vs, fs) in enumerate(parts):
+                            hull_mesh = trimesh.Trimesh(vs, fs)
+                            hull_filename = f"collision/{link_name}_{i}.stl"
+                            hull_path = mesh_dir / hull_filename
+                            hull_mesh.export(hull_path)
+                            collision_list.append(hull_filename)
 
-                        ms.save_current_mesh(str(col_path))
-
-                        # Check file size constraint (<50KB)
-                        if col_path.stat().st_size > 50 * 1024:
-                            print(f"Warning: Collision mesh {col_filename} is > 50KB")
+                        collision_filenames = collision_list
 
                     except Exception as e:
                         print(
-                            f"Error creating collision mesh for {link_name} with pymeshlab: {e}"
+                            f"CoACD failed for {link_name}: {e}. Falling back to single convex hull."
                         )
-                        # Fallback: copy raw STL
-                        import shutil
+                        # Fallback to single convex hull using pymeshlab (existing logic)
+                        col_filename = f"collision/{link_name}.stl"
+                        col_path = mesh_dir / col_filename
 
-                        shutil.copy(temp_stl, col_path)
+                        try:
+                            ms = pymeshlab.MeshSet()
+                            ms.load_new_mesh(str(temp_stl))
+
+                            # Generate Convex Hull
+                            ms.generate_convex_hull()
+
+                            # Simplify if needed (target 200 faces)
+                            if ms.current_mesh().face_number() > 2000:
+                                ms.meshing_decimation_quadric_edge_collapse(
+                                    targetfacenum=2000,
+                                )
+
+                            ms.save_current_mesh(str(col_path))
+
+                            # Check file size constraint (<50KB)
+                            if col_path.stat().st_size > 50 * 1024:
+                                print(
+                                    f"Warning: Collision mesh {col_filename} is > 50KB"
+                                )
+
+                        except Exception as e2:
+                            print(
+                                f"Fallback collision failed for {link_name}: {e2}. Copying raw STL."
+                            )
+                            import shutil
+
+                            shutil.copy(temp_stl, col_path)
+
+                        collision_filenames = col_filename
 
                     # Store both
                     mesh_map[link_name] = {
                         "visual": vis_filename,
-                        "collision": col_filename,
+                        "collision": collision_filenames,
                     }
 
                     # Clean up temp
