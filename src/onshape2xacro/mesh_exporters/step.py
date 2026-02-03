@@ -27,6 +27,7 @@ from OCP.gp import gp_Trsf
 from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from loguru import logger
 import trimesh
+import pymeshlab
 import coacd
 
 
@@ -909,7 +910,23 @@ class StepMeshExporter:
                                 if meshes_to_merge:
                                     combined = trimesh.util.concatenate(meshes_to_merge)
                                     if visual_mesh_format == "dae":
-                                        combined.export(vis_path, file_type="dae")
+                                        # trimesh DAE export does not support vertex colors well (single material).
+                                        # Use pymeshlab to convert OBJ (which supports colors) to DAE with vertex colors.
+                                        temp_obj = mesh_dir / f"{link_name}_temp.obj"
+                                        combined.export(str(temp_obj), file_type="obj")
+
+                                        try:
+                                            ms = pymeshlab.MeshSet()
+                                            ms.load_new_mesh(str(temp_obj))
+                                            ms.save_current_mesh(str(vis_path))
+                                        except Exception as e:
+                                            print(
+                                                f"PyMeshLab DAE conversion failed for {link_name}: {e}. Falling back to trimesh."
+                                            )
+                                            combined.export(vis_path, file_type="dae")
+                                        finally:
+                                            if temp_obj.exists():
+                                                temp_obj.unlink()
                                     elif visual_mesh_format == "obj":
                                         combined.export(vis_path, file_type="obj")
                                     else:
