@@ -100,6 +100,7 @@ def test_step_export_visual_formats(tmp_path):
                 side_effect=populate_shapes,
             ),
             patch("trimesh.util.concatenate") as mock_concat,
+            patch("pymeshlab.MeshSet") as mock_mesh_set,
         ):
             mock_concat.return_value = mock_mesh
             exporter.export_link_meshes(
@@ -118,8 +119,15 @@ def test_step_export_visual_formats(tmp_path):
             # We can't easily verify the attribute set on a MagicMock unless we configure it,
             # but verifying concatenate is called implies we went through the color path
 
-        # Verify trimesh export called with dae
-        mock_mesh.export.assert_called_with(ANY, file_type="dae")
+            # Verify DAE export logic:
+            # 1. Intermediate OBJ export via trimesh
+            mock_mesh.export.assert_called_with(ANY, file_type="obj")
+
+            # 2. PyMeshLab conversion
+            assert mock_mesh_set.called
+            ms_instance = mock_mesh_set.return_value
+            ms_instance.load_new_mesh.assert_called_with(ANY)  # Should load temp OBJ
+            ms_instance.save_current_mesh.assert_called_with(ANY)  # Should save DAE
 
         # Test OBJ export
         with (
