@@ -265,7 +265,7 @@ class XacroSerializer(RobotSerializer):
         name: str,
         elements: Dict,
         config: ConfigOverride,
-        mesh_map: Dict,
+        mesh_map: Dict[str, str | Dict[str, str | List[str]]],
         children: List,
         mesh_rel_path: str = "meshes",
     ):
@@ -302,7 +302,7 @@ class XacroSerializer(RobotSerializer):
         root: ET._Element,
         robot: "Robot",
         config: ConfigOverride,
-        mesh_map: Dict,
+        mesh_map: Dict[str, str | Dict[str, str | List[str]]],
         mesh_rel_path: str = "meshes",
     ):
         macro = ET.SubElement(root, "{http://www.ros.org/wiki/xacro}macro")
