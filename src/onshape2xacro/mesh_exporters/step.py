@@ -936,30 +936,32 @@ class StepMeshExporter:
                         print(f"Error creating visual mesh for {link_name}: {e}")
                         raise e
 
-                    # 2. Collision: Decomposed hulls (using CoACD)
                     try:
-                        mesh = trimesh.load(str(temp_stl), force="mesh")
-                        coacd_mesh = coacd.Mesh(mesh.vertices, mesh.faces)
-                        parts = coacd.run_coacd(
-                            coacd_mesh, threshold=0.05, max_convex_hull=32, seed=42
-                        )
-
                         collision_filenames = []
-                        if not parts:
-                            # Fallback to raw STL if CoACD returns nothing
+                        if collision_mesh_method == "coacd":
+                            mesh = trimesh.load(str(temp_stl), force="mesh")
+                            coacd_mesh = coacd.Mesh(mesh.vertices, mesh.faces)
+                            parts = coacd.run_coacd(
+                                coacd_mesh, threshold=0.05, max_convex_hull=32, seed=42
+                            )
+
+                            if parts:
+                                for i, (verts, faces) in enumerate(parts):
+                                    col_filename = f"collision/{link_name}_{i}.stl"
+                                    col_path = mesh_dir / col_filename
+                                    part_mesh = trimesh.Trimesh(
+                                        vertices=verts, faces=faces
+                                    )
+                                    part_mesh.export(str(col_path))
+                                    collision_filenames.append(col_filename)
+
+                        if not collision_filenames:
                             col_filename = f"collision/{link_name}_0.stl"
                             col_path = mesh_dir / col_filename
                             import shutil
 
                             shutil.copy(temp_stl, col_path)
                             collision_filenames.append(col_filename)
-                        else:
-                            for i, (verts, faces) in enumerate(parts):
-                                col_filename = f"collision/{link_name}_{i}.stl"
-                                col_path = mesh_dir / col_filename
-                                part_mesh = trimesh.Trimesh(vertices=verts, faces=faces)
-                                part_mesh.export(str(col_path))
-                                collision_filenames.append(col_filename)
 
                         col_result = collision_filenames
 
