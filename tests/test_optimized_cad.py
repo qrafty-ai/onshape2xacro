@@ -1,5 +1,6 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+import asyncio
+from unittest.mock import MagicMock, patch
 
 from onshape_robotics_toolkit.models.assembly import (
     RootAssembly,
@@ -17,10 +18,10 @@ from onshape2xacro.optimized_cad import OptimizedCAD, OptimizedClient
 @pytest.fixture
 def mock_client():
     client = MagicMock(spec=OptimizedClient)
-    # Async methods need AsyncMock or return awaitable
-    client.get_root_assembly = AsyncMock()
-    client.get_mass_property = AsyncMock()
-    client.get_assembly_mass_properties = AsyncMock()
+    # Methods called via asyncio.to_thread should be synchronous mocks
+    client.get_root_assembly = MagicMock()
+    client.get_mass_property = MagicMock()
+    client.get_assembly_mass_properties = MagicMock()
     # Synchronous methods
     client.get_assembly = MagicMock()
     client.get_features = MagicMock()
@@ -79,9 +80,11 @@ def test_from_url_success(mock_client):
         # Verify call to client
         mock_client.get_assembly.assert_called_once()
         args, kwargs = mock_client.get_assembly.call_args
-        assert kwargs["did"] == "000000000000000000000001"
-        assert kwargs["wid"] == "000000000000000000000002"
-        assert kwargs["eid"] == "000000000000000000000003"
+        # did, wtype, wid, eid are positional args
+        assert args[0] == "000000000000000000000001"  # did
+        assert args[1] == "w"  # wtype
+        assert args[2] == "000000000000000000000002"  # wid
+        assert args[3] == "000000000000000000000003"  # eid
 
         # Verify instantiation
         mock_from_asm.assert_called_once()
@@ -94,11 +97,10 @@ def test_from_url_missing_client():
         OptimizedCAD.from_url(url, client=None)
 
 
-@pytest.mark.asyncio
-async def test_fetch_occurrences_deduplication(mock_cad, mock_client):
+def test_fetch_occurrences_deduplication(mock_cad, mock_client):
     # Setup: 2 instances of the SAME subassembly definition
-    sub1_key = PathKey(path=("sub1",))
-    sub2_key = PathKey(path=("sub2",))
+    sub1_key = PathKey(path=("sub1",), name_path=("sub1",))
+    sub2_key = PathKey(path=("sub2",), name_path=("sub2",))
 
     # Mock SubAssembly objects
     sub_asm = MagicMock(spec=SubAssembly)
@@ -123,19 +125,19 @@ async def test_fetch_occurrences_deduplication(mock_cad, mock_client):
     mock_client.get_root_assembly.return_value = mock_root
 
     # Run
-    await mock_cad.fetch_occurrences_for_subassemblies(mock_client)
+    asyncio.run(mock_cad.fetch_occurrences_for_subassemblies(mock_client))
 
     # Verify get_root_assembly called ONLY ONCE
-    mock_client.get_root_assembly.assert_awaited_once()
+    # Since we use asyncio.run, AsyncMock should track the await
+    mock_client.get_root_assembly.assert_called_once()
     kwargs = mock_client.get_root_assembly.call_args.kwargs
     assert kwargs["did"] == "d2"
     assert kwargs["eid"] == "e2"
 
 
-@pytest.mark.asyncio
-async def test_fetch_occurrences_suppressed(mock_cad, mock_client):
+def test_fetch_occurrences_suppressed(mock_cad, mock_client):
     # Setup: 1 suppressed instance
-    sub_key = PathKey(path=("sub1",))
+    sub_key = PathKey(path=("sub1",), name_path=("sub1",))
 
     sub_asm = MagicMock(spec=SubAssembly)
     sub_asm.isRigid = True
@@ -148,16 +150,16 @@ async def test_fetch_occurrences_suppressed(mock_cad, mock_client):
     mock_cad.instances = {sub_key: inst}
 
     # Run
-    await mock_cad.fetch_occurrences_for_subassemblies(mock_client)
+    asyncio.run(mock_cad.fetch_occurrences_for_subassemblies(mock_client))
 
     # Verify get_root_assembly NOT called
-    mock_client.get_root_assembly.assert_not_awaited()
+    mock_client.get_root_assembly.assert_not_called()
 
 
 def test_fetch_mate_limits_parsing(mock_cad, mock_client):
     # Setup
     feature_id = "feat1"
-    sub_key = PathKey(path=("sub1",))
+    sub_key = PathKey(path=("sub1",), name_path=("sub1",))
 
     # Add a non-rigid subassembly to trigger feature fetching
     sub_asm = MagicMock(spec=SubAssembly)
@@ -217,11 +219,10 @@ def test_fetch_mate_limits_parsing(mock_cad, mock_client):
         mock_client.get_features.assert_called()
 
 
-@pytest.mark.asyncio
-async def test_fetch_mass_properties_mixed(mock_cad, mock_client):
+def test_fetch_mass_properties_mixed(mock_cad, mock_client):
     # Setup
     # Part 1: Normal part
-    p1_key = PathKey(path=("p1",))
+    p1_key = PathKey(path=("p1",), name_path=("p1",))
     p1 = MagicMock(spec=Part)
     p1.bodyType = "solid"
     p1.isRigidAssembly = False
@@ -233,7 +234,7 @@ async def test_fetch_mass_properties_mixed(mock_cad, mock_client):
     p1.rigidAssemblyToPartTF = None
 
     # Part 2: Rigid Assembly
-    p2_key = PathKey(path=("p2",))
+    p2_key = PathKey(path=("p2",), name_path=("p2",))
     p2 = MagicMock(spec=Part)
     p2.bodyType = "solid"
     p2.isRigidAssembly = True
@@ -257,12 +258,12 @@ async def test_fetch_mass_properties_mixed(mock_cad, mock_client):
     mock_client.get_assembly_mass_properties.return_value = mass_p2
 
     # Run
-    await mock_cad.fetch_mass_properties_for_parts(mock_client)
+    asyncio.run(mock_cad.fetch_mass_properties_for_parts(mock_client))
 
     # Verify assignments
     assert p1.MassProperty == mass_p1
     assert p2.MassProperty == mass_p2
 
     # Verify API calls
-    mock_client.get_mass_property.assert_awaited()
-    mock_client.get_assembly_mass_properties.assert_awaited()
+    mock_client.get_mass_property.assert_called()
+    mock_client.get_assembly_mass_properties.assert_called()

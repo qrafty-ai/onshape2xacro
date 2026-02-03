@@ -96,14 +96,13 @@ def test_cli_export_help(monkeypatch, capsys):
 
 def test_cli_version(monkeypatch, capsys):
     import sys
-    from onshape2xacro.cli import main
+    from onshape2xacro.cli import parse_args
 
-    # Version support needs to be added to cli.py/main
     test_args = ["onshape2xacro", "--version"]
     monkeypatch.setattr(sys, "argv", test_args)
 
-    # We expect this to fail/exit for now until implemented
-    with pytest.raises(SystemExit):
-        main()
+    with pytest.raises(SystemExit) as exc:
+        parse_args()
+    assert exc.value.code == 0
     out, err = capsys.readouterr()
-    # Placeholder for version check
+    assert "onshape2xacro" in out

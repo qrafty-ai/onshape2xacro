@@ -151,3 +151,15 @@ def test_run_export_prefetched_uses_client_if_credentials_available(
         max_depth=1,
     )
     pipeline.run_export(config)
+
+
+def test_pipeline_credentials_error(monkeypatch):
+    import os
+    import pytest
+    from onshape2xacro.pipeline import _get_client_and_cad
+
+    monkeypatch.setattr("onshape2xacro.pipeline.get_credentials", lambda: (None, None))
+    monkeypatch.setattr(os, "environ", {})
+
+    with pytest.raises(ValueError, match="Onshape credentials not found"):
+        _get_client_and_cad("http://url", 5)

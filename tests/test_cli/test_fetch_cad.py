@@ -102,3 +102,68 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
 
     # Verify mate_values.json is NOT saved
     assert not (output_file / "mate_values.json").exists()
+
+
+def test_fetch_cad_existing_config_and_bom_warning(monkeypatch, tmp_path):
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+    from onshape2xacro.schema import FetchCadConfig
+    from onshape2xacro.pipeline import run_fetch_cad
+
+    # Setup
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "configuration.yaml").touch()
+
+    config = FetchCadConfig(
+        url="http://url", output=output_dir, max_depth=5, bom=Path("missing_bom.csv")
+    )
+
+    # Mocks
+    mock_client = MagicMock()
+    mock_cad = MagicMock()
+    mock_cad.name = "robot"
+
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline._get_client_and_cad",
+        lambda u, d: (mock_client, mock_cad),
+    )
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.OptimizedCAD.from_url", lambda *args, **kwargs: mock_cad
+    )
+
+    # Mock StepMeshExporter
+    mock_exporter = MagicMock()
+    monkeypatch.setattr(
+        "onshape2xacro.mesh_exporters.step.StepMeshExporter",
+        lambda c, cad: mock_exporter,
+    )
+
+    # Mock internal helpers
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline._generate_default_mate_values", lambda cad: {}
+    )
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.KinematicGraph.from_cad", lambda cad: MagicMock()
+    )
+
+    mock_robot = MagicMock()
+    mock_robot.nodes = []
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.CondensedRobot.from_graph",
+        lambda *args, **kwargs: mock_robot,
+    )
+
+    # Mock pickle dump
+    monkeypatch.setattr("pickle.dump", lambda obj, f: None)
+
+    # Run
+    with patch("builtins.print") as mock_print:
+        run_fetch_cad(config)
+
+        # Verify warnings
+        calls = [str(c) for c in mock_print.mock_calls]
+        assert any("Warning: missing_bom.csv" in c for c in calls) or any(
+            "BOM file not found" in c for c in calls
+        )
+        assert any("already exists. Skipping generation" in c for c in calls)
