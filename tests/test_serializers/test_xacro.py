@@ -149,3 +149,30 @@ def test_xacro_joint_origin(tmp_path):
         # Check visual/collision origins for links are "0 0 0" when mesh_map is present
         # Both link_a and link_b should have identity origins for their visuals/collisions
         assert content.count('<origin xyz="0 0 0" rpy="0 0 0"/>') >= 4
+
+
+def test_xacro_plumbs_collision_options(tmp_path):
+    from onshape2xacro.config.export_config import CollisionOptions, CoACDOptions
+
+    robot = nx.DiGraph()
+    robot.name = "r"
+    robot.client = SimpleNamespace()
+    robot.cad = SimpleNamespace(document_id="doc", element_id="elem")
+
+    serializer = XacroSerializer()
+    collision_option = CollisionOptions(
+        method="coacd", coacd=CoACDOptions(threshold=0.123)
+    )
+
+    with patch("onshape2xacro.serializers.StepMeshExporter") as mock_exporter_cls:
+        mock_exporter = mock_exporter_cls.return_value
+        mock_exporter.export_link_meshes.return_value = ({}, {}, None)
+
+        out = tmp_path / "output"
+        serializer.save(
+            robot, str(out), download_assets=True, collision_option=collision_option
+        )
+
+        args, kwargs = mock_exporter.export_link_meshes.call_args
+        assert kwargs["collision_option"] == collision_option
+        assert kwargs["collision_option"].coacd.threshold == 0.123
