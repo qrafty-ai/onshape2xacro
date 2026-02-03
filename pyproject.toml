@@ -21,8 +21,6 @@ dependencies = [
 
 [project.scripts]
 onshape2xacro = "onshape2xacro.cli:main"
-validate-xacro = "onshape2xacro.validate:main"
-visualize-export = "onshape2xacro.visualize_export:main"
 
 [tool.uv]
 package = true
