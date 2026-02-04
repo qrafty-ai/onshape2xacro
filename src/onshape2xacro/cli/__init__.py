@@ -63,7 +63,7 @@ def main():
             # Generalized CLI override application
             from dataclasses import fields
 
-            # Override ExportOptions (name, output, visual_mesh_format, bom, etc.)
+            # Override ExportOptions (name, output, visual_mesh_formats, bom, etc.)
             for field in fields(ExportConfig):
                 field_name = field.name
                 if field_name == "path":  # path is not in ExportOptions

@@ -63,7 +63,7 @@ class XacroSerializer(RobotSerializer):
         download_assets: bool = True,
         mesh_dir: Optional[str] = None,
         bom_path: Optional[Path] = None,
-        visual_mesh_format: str = "obj",
+        visual_mesh_formats: list[str] = ["obj"],
         collision_option: Optional[CollisionOptions] = None,
         **options: Any,
     ):
@@ -81,6 +81,11 @@ class XacroSerializer(RobotSerializer):
         for d in [urdf_dir, mesh_dir_path, config_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
+        # Determine default visual extension
+        default_visual_mesh_ext = (
+            visual_mesh_formats[0] if visual_mesh_formats else "obj"
+        )
+
         # 1. Export meshes (Stage 6) & Compute Inertials
         mesh_map = {}
         missing_meshes = {}
@@ -90,7 +95,7 @@ class XacroSerializer(RobotSerializer):
             mesh_map, missing_meshes, report = self._export_meshes(
                 robot,
                 mesh_dir_path,
-                visual_mesh_format=visual_mesh_format,
+                visual_mesh_formats=visual_mesh_formats,
                 bom_path=bom_path,
                 collision_option=collision_option,
             )
@@ -154,6 +159,7 @@ class XacroSerializer(RobotSerializer):
                 mesh_map,
                 children,
                 mesh_rel_path=mesh_rel_path,
+                default_visual_mesh_ext=default_visual_mesh_ext,
             )
 
             with open(module_path, "w") as f:
@@ -189,13 +195,24 @@ class XacroSerializer(RobotSerializer):
             value="${inertials_file['inertials']}",
         )
 
+        # Argument for visual mesh format
+        ET.SubElement(
+            entry_point_root,
+            "{http://www.ros.org/wiki/xacro}arg",
+            name="visual_mesh_ext",
+            default=default_visual_mesh_ext,
+        )
+
         # Include the macro file
         inc = ET.SubElement(entry_point_root, "{http://www.ros.org/wiki/xacro}include")
         inc.set("filename", f"{main_name}.xacro")
 
         # Instantiate the macro
         ET.SubElement(
-            entry_point_root, f"{{http://www.ros.org/wiki/xacro}}{main_name}", prefix=""
+            entry_point_root,
+            f"{{http://www.ros.org/wiki/xacro}}{main_name}",
+            prefix="",
+            visual_mesh_ext="$(arg visual_mesh_ext)",
         )
 
         entry_point_content = ET.tostring(
@@ -257,10 +274,11 @@ class XacroSerializer(RobotSerializer):
         mesh_map: Dict[str, str | Dict[str, str | List[str]]],
         children: List,
         mesh_rel_path: str = "meshes",
+        default_visual_mesh_ext: str = "obj",
     ):
         macro = ET.SubElement(root, "{http://www.ros.org/wiki/xacro}macro")
         macro.set("name", sanitize_name(name))
-        macro.set("params", "prefix:=''")
+        macro.set("params", f"prefix:='' visual_mesh_ext:='{default_visual_mesh_ext}'")
 
         for link in elements["links"]:
             if link:
@@ -284,6 +302,7 @@ class XacroSerializer(RobotSerializer):
                 macro,
                 "{http://www.ros.org/wiki/xacro}" + child_name,
                 prefix="${prefix}",
+                visual_mesh_ext="${visual_mesh_ext}",
             )
 
     def _add_robot_macro(
@@ -431,17 +450,26 @@ class XacroSerializer(RobotSerializer):
 
             entry = mesh_map[name]
             # Handle both old (str) and new (dict) formats
+            collision_file = None
+
             if isinstance(entry, dict):
-                visual_file = entry.get("visual", f"{name}.stl")
+                visual_entry = entry.get("visual", f"{name}.stl")
+                if isinstance(visual_entry, dict):
+                    pass
+                elif isinstance(visual_entry, str):
+                    pass
+
                 collision_file = entry.get("collision", f"{name}.stl")
             else:
-                visual_file = entry
                 collision_file = entry
 
             for tag in ["visual", "collision"]:
                 files_to_add = []
                 if tag == "visual":
-                    files_to_add = [visual_file]
+                    # For visual, we rely on the xacro parameter to select the extension
+                    # We just add one mesh element with the dynamic filename
+                    # Note: this assumes at least one visual mesh exists if 'visual' key is present
+                    files_to_add = ["dynamic"]
                 else:
                     if isinstance(collision_file, list):
                         files_to_add = collision_file
@@ -455,7 +483,15 @@ class XacroSerializer(RobotSerializer):
                     geom = ET.SubElement(el, "geometry")
                     mesh = ET.SubElement(geom, "mesh")
 
-                    mesh.set("filename", f"{mesh_rel_path}/{filename}")
+                    if tag == "visual":
+                        # Use the xacro parameter for extension
+                        mesh.set(
+                            "filename",
+                            f"{mesh_rel_path}/visual/{name}.${{visual_mesh_ext}}",
+                        )
+                    else:
+                        mesh.set("filename", f"{mesh_rel_path}/{filename}")
+
                     mesh.set("scale", "0.001 0.001 0.001")
 
     def _joint_to_xacro(
@@ -538,11 +574,11 @@ class XacroSerializer(RobotSerializer):
         self,
         robot: "Robot",
         mesh_dir: Path,
-        visual_mesh_format: str = "obj",
+        visual_mesh_formats: list[str] = ["obj"],
         bom_path: Optional[Path] = None,
         collision_option: Optional[CollisionOptions] = None,
     ) -> tuple[
-        dict[str, str | dict[str, str | list[str]]],
+        dict[str, Any],
         dict[str, list[dict[str, str]]],
         Optional["InertiaReport"],
     ]:
@@ -565,7 +601,7 @@ class XacroSerializer(RobotSerializer):
                 link_records,
                 mesh_dir,
                 bom_path=bom_path,
-                visual_mesh_format=visual_mesh_format,
+                visual_mesh_formats=visual_mesh_formats,
                 collision_option=collision_option,
             )
             return mesh_map, missing_meshes, report

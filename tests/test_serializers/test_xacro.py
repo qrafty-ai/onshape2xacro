@@ -78,6 +78,10 @@ def test_xacro_uses_link_mesh_map(tmp_path):
 
     with open(out / "urdf" / "r.xacro", "r") as f:
         content = f.read()
+        # Visual mesh should use dynamic extension
+        assert "link_a.${visual_mesh_ext}" in content
+        assert "link_b.${visual_mesh_ext}" in content
+        # Collision mesh should still use the explicit file
         assert "link_a.stl" in content
         assert "link_b.stl" in content
         assert 'name="${prefix}revolute"' in content
@@ -176,3 +180,5 @@ def test_xacro_plumbs_collision_options(tmp_path):
         args, kwargs = mock_exporter.export_link_meshes.call_args
         assert kwargs["collision_option"] == collision_option
         assert kwargs["collision_option"].coacd.threshold == 0.123
+        # Check default format is passed
+        assert kwargs["visual_mesh_formats"] == ["obj"]
