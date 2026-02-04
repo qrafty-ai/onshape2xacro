@@ -18,6 +18,7 @@ dependencies = [
     "cadquery>=2.6.1",
     "pycollada>=0.8",
     "coacd>=1.0.7",
+    "rich>=13.0.0",
 ]
 
 [project.scripts]

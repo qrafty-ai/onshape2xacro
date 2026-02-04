@@ -117,7 +117,7 @@ def run_export(
         export_configuration.merge_cli_overrides(
             name=config.name,
             output=config.output,
-            visual_mesh_format=config.visual_mesh_format,
+            visual_mesh_formats=config.visual_mesh_formats,
         )
 
     import pickle
@@ -197,7 +197,7 @@ def run_export(
 
     # 6. Serialize and Save
     output_path = export_configuration.export.output
-    visual_mesh_format = export_configuration.export.visual_mesh_format
+    visual_mesh_formats = export_configuration.export.visual_mesh_formats
 
     print(f"Serializing to {output_path}...")
     serializer = XacroSerializer()
@@ -207,7 +207,7 @@ def run_export(
         download_assets=True,
         config=override,
         bom_path=bom_path,
-        visual_mesh_format=visual_mesh_format,
+        visual_mesh_formats=visual_mesh_formats,
         collision_option=export_configuration.export.collision_option,
     )
     print("Export complete!")

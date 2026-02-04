@@ -25,7 +25,7 @@ class CollisionOptions:
 @dataclass
 class ExportOptions:
     name: str = "robot"
-    visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
+    visual_mesh_formats: list[str] = field(default_factory=lambda: ["obj"])
     collision_option: CollisionOptions = field(default_factory=CollisionOptions)
     output: Path = field(default_factory=lambda: Path("output"))
     bom: Path | None = None
@@ -46,6 +46,10 @@ class ExportConfiguration:
             data = yaml.safe_load(f) or {}
 
         export_data = data.get("export", {})
+        if "visual_mesh_format" in export_data:
+            # Migration: convert single format to list
+            export_data["visual_mesh_formats"] = [export_data.pop("visual_mesh_format")]
+
         if "output" in export_data:
             export_data["output"] = Path(export_data["output"])
         if "bom" in export_data and export_data["bom"]:
@@ -92,7 +96,7 @@ class ExportConfiguration:
         self,
         name: str | None = None,
         output: Path | None = None,
-        visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None,
+        visual_mesh_formats: list[str] | None = None,
         collision_method: Literal["fast", "coacd"] | None = None,
         bom: Path | None = None,
     ) -> None:
@@ -100,8 +104,8 @@ class ExportConfiguration:
             self.export.name = name
         if output:
             self.export.output = output
-        if visual_mesh_format:
-            self.export.visual_mesh_format = visual_mesh_format
+        if visual_mesh_formats:
+            self.export.visual_mesh_formats = visual_mesh_formats
         if collision_method:
             self.export.collision_option.method = collision_method
         if bom:

@@ -305,7 +305,7 @@ def test_export_link_meshes_color_integration(tmp_path):
 
             # RUN
             exporter.export_link_meshes(
-                link_records, mesh_dir, visual_mesh_format="obj"
+                link_records, mesh_dir, visual_mesh_formats=["obj"]
             )
 
             # VERIFY

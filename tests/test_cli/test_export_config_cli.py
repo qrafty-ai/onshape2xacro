@@ -20,7 +20,7 @@ def test_export_auto_loads_configuration_yaml(monkeypatch, tmp_path):
         "export": {
             "name": "yaml_robot",
             "output": "yaml_output",
-            "visual_mesh_format": "stl",
+            "visual_mesh_formats": ["stl"],
         }
     }
     with open(local_dir / "configuration.yaml", "w") as f:
@@ -29,7 +29,7 @@ def test_export_auto_loads_configuration_yaml(monkeypatch, tmp_path):
     mock_run_export = MagicMock()
     monkeypatch.setattr(pipeline, "run_export", mock_run_export)
 
-    test_args = ["onshape2xacro", "export", str(local_dir)]
+    test_args = ["onshape2xacro", "export", str(local_dir), "--skip-confirmation"]
     monkeypatch.setattr(sys, "argv", test_args)
 
     main()
@@ -39,7 +39,7 @@ def test_export_auto_loads_configuration_yaml(monkeypatch, tmp_path):
 
     assert config.name == "yaml_robot"
     assert Path(config.output).name == "yaml_output"
-    assert config.visual_mesh_format == "stl"
+    assert config.visual_mesh_formats == ["stl"]
 
 
 def test_export_fails_missing_configuration_yaml(monkeypatch, tmp_path):
@@ -70,7 +70,7 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
         "export": {
             "name": "yaml_robot",
             "output": "yaml_output",
-            "visual_mesh_format": "stl",
+            "visual_mesh_formats": ["stl"],
         }
     }
     with open(local_dir / "configuration.yaml", "w") as f:
@@ -87,8 +87,9 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
         "override_name",
         "--output",
         "override_output",
-        "--visual-mesh-format",
+        "--visual-mesh-formats",
         "glb",
+        "--skip-confirmation",
     ]
     monkeypatch.setattr(sys, "argv", test_args)
 
@@ -99,4 +100,4 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
 
     assert config.name == "override_name"
     assert Path(config.output).name == "override_output"
-    assert config.visual_mesh_format == "glb"
+    assert config.visual_mesh_formats == ["glb"]

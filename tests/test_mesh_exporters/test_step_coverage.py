@@ -89,7 +89,7 @@ def test_dae_pymeshlab_fallback(tmp_path):
 
             # RUN
             exporter.export_link_meshes(
-                link_records, mesh_dir, visual_mesh_format="dae"
+                link_records, mesh_dir, visual_mesh_formats=["dae"]
             )
 
             # VERIFY fallback

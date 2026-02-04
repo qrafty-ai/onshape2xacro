@@ -553,10 +553,10 @@ class StepMeshExporter:
         link_records: Dict[str, Any],
         mesh_dir: Path,
         bom_path: Optional[Path] = None,
-        visual_mesh_format: str = "obj",
+        visual_mesh_formats: List[str] = ["obj"],
         collision_option: Optional[CollisionOptions] = None,
     ) -> Tuple[
-        Dict[str, str | Dict[str, str | List[str]]],
+        Dict[str, str | Dict[str, str | List[str] | Dict[str, str]]],
         Dict[str, List[Dict[str, str]]],
         Optional["InertiaReport"],
     ]:
@@ -907,85 +907,80 @@ class StepMeshExporter:
 
                 # Process with trimesh
                 try:
-                    vis_filename = f"visual/{link_name}.{visual_mesh_format}"
-                    vis_path = mesh_dir / vis_filename
+                    visual_files = {}
+                    combined_mesh = None
 
-                    try:
-                        if visual_mesh_format == "stl":
-                            import shutil
+                    # Prepare combined mesh if needed for non-STL formats
+                    non_stl_formats = [f for f in visual_mesh_formats if f != "stl"]
+                    if non_stl_formats:
+                        # If no parts have color, we can just load the compound STL (faster)
+                        # But if at least one has color, we should process all to match structure
+                        has_colors = any(c is not None for _, c in visual_parts)
 
-                            shutil.copy(temp_stl, vis_path)
+                        if not has_colors:
+                            # Fast path
+                            combined_mesh = trimesh.load(str(temp_stl), force="mesh")
                         else:
                             # Use trimesh to combine parts with colors
                             meshes_to_merge = []
+                            for i, (part_shape, part_color) in enumerate(visual_parts):
+                                # Export part_shape to temp STL
+                                part_stl_path = mesh_dir / f"{link_name}_part_{i}.stl"
+                                stl_writer.Write(part_shape, str(part_stl_path))
 
-                            # If no parts have color, we can just load the compound STL (faster)
-                            # But if at least one has color, we should process all to match structure
-                            has_colors = any(c is not None for _, c in visual_parts)
+                                part_mesh = trimesh.load(
+                                    str(part_stl_path), force="mesh"
+                                )
+                                part_stl_path.unlink()
 
-                            if not has_colors:
-                                # Fast path
-                                mesh = trimesh.load(str(temp_stl), force="mesh")
-                                if visual_mesh_format == "dae":
-                                    mesh.export(vis_path, file_type="dae")
-                                elif visual_mesh_format == "obj":
-                                    mesh.export(vis_path, file_type="obj")
-                                else:
-                                    mesh.export(vis_path)
+                                if part_color:
+                                    # part_color is (R, G, B) 0.0-1.0
+                                    rgba = [int(c * 255) for c in part_color] + [255]
+                                    part_mesh.visual.face_colors = rgba
+
+                                meshes_to_merge.append(part_mesh)
+
+                            if meshes_to_merge:
+                                combined_mesh = trimesh.util.concatenate(
+                                    meshes_to_merge
+                                )
+
+                    for fmt in visual_mesh_formats:
+                        vis_filename = f"visual/{link_name}.{fmt}"
+                        vis_path = mesh_dir / vis_filename
+                        visual_files[fmt] = vis_filename
+
+                        if fmt == "stl":
+                            import shutil
+
+                            shutil.copy(temp_stl, vis_path)
+                            continue
+
+                        if combined_mesh:
+                            if fmt == "dae":
+                                # trimesh DAE export does not support vertex colors well (single material).
+                                # Use pymeshlab to convert OBJ (which supports colors) to DAE with vertex colors.
+                                temp_obj = mesh_dir / f"{link_name}_temp.obj"
+                                combined_mesh.export(str(temp_obj), file_type="obj")
+
+                                try:
+                                    import pymeshlab
+
+                                    ms = pymeshlab.MeshSet()
+                                    ms.load_new_mesh(str(temp_obj))
+                                    ms.save_current_mesh(str(vis_path))
+                                except Exception as e:
+                                    print(
+                                        f"PyMeshLab DAE conversion failed for {link_name}: {e}. Falling back to trimesh."
+                                    )
+                                    combined_mesh.export(vis_path, file_type="dae")
+                                finally:
+                                    if temp_obj.exists():
+                                        temp_obj.unlink()
+                            elif fmt == "obj":
+                                combined_mesh.export(vis_path, file_type="obj")
                             else:
-                                for i, (part_shape, part_color) in enumerate(
-                                    visual_parts
-                                ):
-                                    # Export part_shape to temp STL
-                                    part_stl_path = (
-                                        mesh_dir / f"{link_name}_part_{i}.stl"
-                                    )
-                                    stl_writer.Write(part_shape, str(part_stl_path))
-
-                                    part_mesh = trimesh.load(
-                                        str(part_stl_path), force="mesh"
-                                    )
-                                    part_stl_path.unlink()
-
-                                    if part_color:
-                                        # part_color is (R, G, B) 0.0-1.0
-                                        rgba = [int(c * 255) for c in part_color] + [
-                                            255
-                                        ]
-                                        part_mesh.visual.face_colors = rgba
-
-                                    meshes_to_merge.append(part_mesh)
-
-                                if meshes_to_merge:
-                                    combined = trimesh.util.concatenate(meshes_to_merge)
-                                    if visual_mesh_format == "dae":
-                                        # trimesh DAE export does not support vertex colors well (single material).
-                                        # Use pymeshlab to convert OBJ (which supports colors) to DAE with vertex colors.
-                                        temp_obj = mesh_dir / f"{link_name}_temp.obj"
-                                        combined.export(str(temp_obj), file_type="obj")
-
-                                        try:
-                                            import pymeshlab
-
-                                            ms = pymeshlab.MeshSet()
-                                            ms.load_new_mesh(str(temp_obj))
-                                            ms.save_current_mesh(str(vis_path))
-                                        except Exception as e:
-                                            print(
-                                                f"PyMeshLab DAE conversion failed for {link_name}: {e}. Falling back to trimesh."
-                                            )
-                                            combined.export(vis_path, file_type="dae")
-                                        finally:
-                                            if temp_obj.exists():
-                                                temp_obj.unlink()
-                                    elif visual_mesh_format == "obj":
-                                        combined.export(vis_path, file_type="obj")
-                                    else:
-                                        combined.export(vis_path)
-
-                    except Exception as e:
-                        print(f"Error creating visual mesh for {link_name}: {e}")
-                        raise e
+                                combined_mesh.export(vis_path)
 
                     try:
                         collision_filenames = []
@@ -1050,7 +1045,7 @@ class StepMeshExporter:
 
                     # Store both
                     mesh_map[link_name] = {
-                        "visual": vis_filename,
+                        "visual": visual_files,
                         "collision": col_result,
                     }
 
@@ -1064,7 +1059,10 @@ class StepMeshExporter:
                     final_stl = mesh_dir / "visual" / f"{link_name}.stl"
                     if temp_stl.exists():
                         temp_stl.rename(final_stl)
-                    mesh_map[link_name] = f"visual/{final_stl.name}"
+                    mesh_map[link_name] = {
+                        "visual": {"stl": f"visual/{final_stl.name}"},
+                        "collision": f"visual/{final_stl.name}",
+                    }
 
         if coacd_tasks:
             logger.info(
