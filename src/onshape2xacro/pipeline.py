@@ -23,6 +23,7 @@ from onshape2xacro.auth import (
     delete_credentials,
     has_stored_credentials,
 )
+from onshape2xacro.naming import sanitize_name
 
 
 # Monkeypatch Occurrence.tf to handle Onshape's column-major transformation arrays.
@@ -156,6 +157,25 @@ def run_export(
     # 4. Create Robot Model
     print("Creating robot model...")
     robot_name = export_configuration.export.name
+    # Fallback to directory name if configured name is invalid/empty/placeholder
+
+    if not robot_name or sanitize_name(robot_name) == "_":
+        logger_func = print
+        try:
+            from loguru import logger
+
+            logger_func = logger.warning
+        except ImportError:
+            pass
+
+        old_name = robot_name
+        robot_name = local_dir.name
+        logger_func(
+            f"Robot name '{old_name}' is invalid/empty. Using directory name '{robot_name}' instead."
+        )
+        # Update configuration so it persists
+        export_configuration.export.name = robot_name
+
     robot = CondensedRobot.from_graph(
         graph,
         cad=cad,
@@ -166,6 +186,7 @@ def run_export(
         fail_fast=getattr(config, "debug", False),
     )
     # Set client and cad for serializer's mesh export
+
     robot.client = client
     robot.cad = cad
     robot.asset_path = asset_path

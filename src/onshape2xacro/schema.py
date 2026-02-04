@@ -8,23 +8,25 @@ import tyro
 class CoACDConfig:
     """Configuration for CoACD collision mesh generation."""
 
-    threshold: float = 0.05
+    threshold: float | None = None
     """Threshold for CoACD."""
-    resolution: int = 2000
+    resolution: int | None = None
     """Resolution for CoACD."""
-    max_convex_hull: int = 32
+    max_convex_hull: int | None = None
     """Maximum convex hull for CoACD."""
-    preprocess: bool = True
+    preprocess: bool | None = None
     """Preprocess for CoACD."""
-    seed: int = 42
+    seed: int | None = None
     """Seed for CoACD."""
+    max_workers: int | None = None
+    """Maximum number of workers for parallel processing."""
 
 
 @dataclass
 class CollisionConfig:
     """Configuration for collision mesh generation."""
 
-    method: Literal["fast", "coacd"] = "fast"
+    method: Literal["fast", "coacd"] | None = None
     """Method for collision mesh generation (fast, coacd). Defaults to fast."""
     coacd: CoACDConfig = field(default_factory=CoACDConfig)
     """CoACD specific configuration."""
@@ -46,7 +48,7 @@ class ExportConfig:
     """Path to BOM CSV file for density lookup."""
     max_depth: int = 5
     """Maximum subassembly traversal depth."""
-    visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
+    visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None
     """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
     collision_option: CollisionConfig = field(default_factory=CollisionConfig)
     """Configuration for collision mesh generation."""

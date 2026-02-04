@@ -13,6 +13,7 @@ class CoACDOptions:
     max_convex_hull: int = 32
     preprocess: bool = True
     seed: int = 42
+    max_workers: int = 10
 
 
 @dataclass
@@ -27,6 +28,7 @@ class ExportOptions:
     visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
     collision_option: CollisionOptions = field(default_factory=CollisionOptions)
     output: Path = field(default_factory=lambda: Path("output"))
+    bom: Path | None = None
 
 
 @dataclass
@@ -46,10 +48,19 @@ class ExportConfiguration:
         export_data = data.get("export", {})
         if "output" in export_data:
             export_data["output"] = Path(export_data["output"])
+        if "bom" in export_data and export_data["bom"]:
+            export_data["bom"] = Path(export_data["bom"])
 
         collision_data = export_data.get("collision_option", {})
         if "coacd" in collision_data:
-            collision_data["coacd"] = CoACDOptions(**collision_data["coacd"])
+            # Sanitize keys: replace hyphens with underscores
+            coacd_data = {
+                k.replace("-", "_"): v for k, v in collision_data["coacd"].items()
+            }
+            # Filter out keys that don't belong to CoACDOptions to be safe
+            valid_keys = CoACDOptions.__annotations__.keys()
+            coacd_data = {k: v for k, v in coacd_data.items() if k in valid_keys}
+            collision_data["coacd"] = CoACDOptions(**coacd_data)
 
         # Support old collision_mesh_method if present
         if "collision_mesh_method" in export_data:
@@ -69,6 +80,8 @@ class ExportConfiguration:
     def save(self, path: Path) -> None:
         data = asdict(self)
         data["export"]["output"] = str(data["export"]["output"])
+        if data["export"].get("bom"):
+            data["export"]["bom"] = str(data["export"]["bom"])
 
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -81,6 +94,7 @@ class ExportConfiguration:
         output: Path | None = None,
         visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None,
         collision_method: Literal["fast", "coacd"] | None = None,
+        bom: Path | None = None,
     ) -> None:
         if name:
             self.export.name = name
@@ -90,3 +104,5 @@ class ExportConfiguration:
             self.export.visual_mesh_format = visual_mesh_format
         if collision_method:
             self.export.collision_option.method = collision_method
+        if bom:
+            self.export.bom = bom

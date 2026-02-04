@@ -189,6 +189,9 @@ class CondensedRobot(Robot):
         # Create the robot instance
         robot = cls(kinematic_graph, name=name)
         robot.clear()
+        # Restore name as clear() might wipe it (depending on parent implementation)
+
+        robot.name = name
 
         # Map group root to LinkRecord
         root_to_link_node = {}
