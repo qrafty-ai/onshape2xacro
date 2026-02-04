@@ -55,22 +55,56 @@ def main():
 
             export_config = ExportConfiguration.load(config_path)
 
-            schema_export_defaults = ExportConfig(path=config.path)
-            collision_defaults = CollisionConfig()
-            schema_defaults = CoACDConfig()
+            ExportConfig(path=config.path)
 
-            for field_name in ["name", "output", "visual_mesh_format"]:
+            CollisionConfig()
+            CoACDConfig()
+
+            # Generalized CLI override application
+            from dataclasses import fields
+
+            # Override ExportOptions (name, output, visual_mesh_format, bom, etc.)
+            for field in fields(ExportConfig):
+                field_name = field.name
+                if field_name == "path":  # path is not in ExportOptions
+                    continue
+                if field_name == "collision_option":  # handled separately
+                    continue
+
+                # Check if this field exists in export_config.export
+                if not hasattr(export_config.export, field_name):
+                    continue
+
                 cli_val = getattr(config, field_name)
-                schema_default = getattr(schema_export_defaults, field_name)
 
-                if cli_val != schema_default:
+                # If CLI provided a value (not None), override config
+                if cli_val is not None:
                     setattr(export_config.export, field_name, cli_val)
                 else:
+                    # Otherwise, update config object with value from file so pipeline sees effective config
                     setattr(
                         config, field_name, getattr(export_config.export, field_name)
                     )
 
-            if config.collision_option.method != collision_defaults.method:
+            if config.bom is None:
+                # Default behavior: search for .csv file in the input directory
+                csv_files = list(config.path.glob("*.csv"))
+                if len(csv_files) == 1:
+                    config.bom = csv_files[0]
+                    export_config.export.bom = csv_files[0]
+                    from loguru import logger
+
+                    logger.info(f"Auto-detected BOM file: {config.bom}")
+                elif len(csv_files) > 1:
+                    from loguru import logger
+
+                    logger.warning(
+                        f"Multiple CSV files found in {config.path}, skipping auto-detection. "
+                        "Please specify BOM file explicitly."
+                    )
+
+            # Override collision method
+            if config.collision_option.method is not None:
                 export_config.export.collision_option.method = (
                     config.collision_option.method
                 )
@@ -79,17 +113,12 @@ def main():
                     export_config.export.collision_option.method
                 )
 
-            for field_name in [
-                "threshold",
-                "resolution",
-                "max_convex_hull",
-                "preprocess",
-                "seed",
-            ]:
+            # Override CoACD options
+            for field in fields(CoACDConfig):
+                field_name = field.name
                 cli_val = getattr(config.collision_option.coacd, field_name)
-                schema_default = getattr(schema_defaults, field_name)
 
-                if cli_val != schema_default:
+                if cli_val is not None:
                     setattr(
                         export_config.export.collision_option.coacd, field_name, cli_val
                     )

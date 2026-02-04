@@ -28,6 +28,7 @@ from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from loguru import logger
 import trimesh
 import coacd
+from concurrent.futures import ProcessPoolExecutor
 from onshape2xacro.config.export_config import CollisionOptions
 
 
@@ -378,6 +379,43 @@ def _part_world_matrix(part: Any) -> np.ndarray:
     return mat
 
 
+def _process_coacd_task(args: Tuple[str, Path, Any, Path]) -> Tuple[str, List[str]]:
+    link_name, stl_path, options, mesh_dir = args
+    collision_filenames = []
+    try:
+        mesh = trimesh.load(str(stl_path), force="mesh")
+        coacd_mesh = coacd.Mesh(mesh.vertices, mesh.faces)
+        parts = coacd.run_coacd(
+            coacd_mesh,
+            threshold=options.threshold,
+            max_convex_hull=options.max_convex_hull,
+            resolution=options.resolution,
+            seed=options.seed,
+        )
+
+        if parts:
+            for i, (verts, faces) in enumerate(parts):
+                col_filename = f"collision/{link_name}_{i}.stl"
+                col_path = mesh_dir / col_filename
+                part_mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+                part_mesh.export(str(col_path))
+                collision_filenames.append(col_filename)
+    except Exception as e:
+        logger.error(f"Error in CoACD task for {link_name}: {e}")
+        # Fallback to single convex hull (copy original)
+        col_filename = f"collision/{link_name}_0.stl"
+        col_path = mesh_dir / col_filename
+        try:
+            import shutil
+
+            shutil.copy(stl_path, col_path)
+            collision_filenames.append(col_filename)
+        except Exception:
+            pass
+
+    return link_name, collision_filenames
+
+
 class StepMeshExporter:
     def __init__(
         self,
@@ -681,6 +719,8 @@ class StepMeshExporter:
                     leaf = leaf[len(prefix) :]
             return leaf
 
+        coacd_tasks = []
+
         for link_name, link in link_records.items():
             keys = link.keys
             if not keys:
@@ -950,25 +990,10 @@ class StepMeshExporter:
                     try:
                         collision_filenames = []
                         if collision_option.method == "coacd":
-                            mesh = trimesh.load(str(temp_stl), force="mesh")
-                            coacd_mesh = coacd.Mesh(mesh.vertices, mesh.faces)
-                            parts = coacd.run_coacd(
-                                coacd_mesh,
-                                threshold=collision_option.coacd.threshold,
-                                max_convex_hull=collision_option.coacd.max_convex_hull,
-                                resolution=collision_option.coacd.resolution,
-                                seed=collision_option.coacd.seed,
+                            coacd_tasks.append(
+                                (link_name, temp_stl, collision_option.coacd, mesh_dir)
                             )
-
-                            if parts:
-                                for i, (verts, faces) in enumerate(parts):
-                                    col_filename = f"collision/{link_name}_{i}.stl"
-                                    col_path = mesh_dir / col_filename
-                                    part_mesh = trimesh.Trimesh(
-                                        vertices=verts, faces=faces
-                                    )
-                                    part_mesh.export(str(col_path))
-                                    collision_filenames.append(col_filename)
+                            col_result = []  # Placeholder
                         elif collision_option.method == "fast":
                             col_filename = f"collision/{link_name}_0.stl"
                             col_path = mesh_dir / col_filename
@@ -997,7 +1022,10 @@ class StepMeshExporter:
                                 shutil.copy(temp_stl, col_path)
                             collision_filenames.append(col_filename)
 
-                        if not collision_filenames:
+                        if (
+                            not collision_filenames
+                            and collision_option.method != "coacd"
+                        ):
                             col_filename = f"collision/{link_name}_0.stl"
                             col_path = mesh_dir / col_filename
                             import shutil
@@ -1008,9 +1036,7 @@ class StepMeshExporter:
                         col_result = collision_filenames
 
                     except Exception as e:
-                        print(
-                            f"Error creating collision mesh for {link_name} with CoACD: {e}"
-                        )
+                        print(f"Error creating collision mesh for {link_name}: {e}")
                         # Fallback to single convex hull (pymeshlab or trimesh)
                         col_filename = f"collision/{link_name}_0.stl"
                         col_path = mesh_dir / col_filename
@@ -1029,7 +1055,8 @@ class StepMeshExporter:
                     }
 
                     # Clean up temp
-                    temp_stl.unlink()
+                    if collision_option.method != "coacd":
+                        temp_stl.unlink()
 
                 except Exception as e:
                     print(f"Error processing mesh for {link_name}: {e}")
@@ -1038,5 +1065,24 @@ class StepMeshExporter:
                     if temp_stl.exists():
                         temp_stl.rename(final_stl)
                     mesh_map[link_name] = f"visual/{final_stl.name}"
+
+        if coacd_tasks:
+            logger.info(
+                f"Processing {len(coacd_tasks)} CoACD tasks with {collision_option.coacd.max_workers} workers..."
+            )
+            with ProcessPoolExecutor(
+                max_workers=collision_option.coacd.max_workers
+            ) as executor:
+                results = executor.map(_process_coacd_task, coacd_tasks)
+                for link_name, col_filenames in results:
+                    if link_name in mesh_map:
+                        entry = mesh_map[link_name]
+                        if isinstance(entry, dict):
+                            entry["collision"] = col_filenames
+
+                    # Clean up temp STL
+                    temp_stl_path = mesh_dir / f"{link_name}_raw.stl"
+                    if temp_stl_path.exists():
+                        temp_stl_path.unlink()
 
         return mesh_map, missing_meshes, report
