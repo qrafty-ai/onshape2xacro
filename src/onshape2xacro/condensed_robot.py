@@ -8,6 +8,7 @@ from onshape_robotics_toolkit.models.assembly import MatedEntity
 from onshape_robotics_toolkit.robot import Robot
 from onshape_robotics_toolkit.models.link import Origin
 from onshape_robotics_toolkit.parse import CAD, MateFeatureData, PathKey
+from onshape2xacro.module_boundary import ModuleBoundaryInfo
 from onshape2xacro.naming import sanitize_name
 
 logger = logging.getLogger(__name__)
@@ -124,11 +125,12 @@ class CondensedRobot(Robot):
     """
 
     client: Any = None
-    cad: CAD = None
+    cad: Optional[CAD] = None
     asset_path: Any = None
+    module_boundaries: Optional[ModuleBoundaryInfo] = None
 
     @classmethod
-    def from_graph(
+    def from_graph(  # pyright: ignore[reportIncompatibleMethodOverride]
         cls,
         kinematic_graph,
         cad: CAD,
@@ -136,6 +138,7 @@ class CondensedRobot(Robot):
         mate_values: Optional[Dict[str, Any]] = None,
         link_name_overrides: Optional[Dict[str, str]] = None,
         fail_fast: bool = True,
+        module_boundaries: Optional[ModuleBoundaryInfo] = None,
     ):
         """
         Create a condensed robot from a kinematic graph.
@@ -145,6 +148,7 @@ class CondensedRobot(Robot):
             mate_values: Dictionary of mate values keyed by featureId.
             link_name_overrides: Dictionary mapping generated link names to custom names.
             fail_fast: If True, raise exception on missing part transforms instead of warning.
+            module_boundaries: Optional module boundary information to restrict link merging.
         """
         if mate_values is None:
             mate_values = {}
@@ -161,6 +165,17 @@ class CondensedRobot(Robot):
         nodes = list(kinematic_graph.nodes)
         parent_map = {node: node for node in nodes}
 
+        module_lookup: dict[Any, Any] = {}
+        interface_mate_ids: set[str] = set()
+        root_module_token = object()
+        if module_boundaries is not None:
+            for part in module_boundaries.root_parts:
+                module_lookup[part] = root_module_token
+            for module_key, parts in module_boundaries.subassembly_parts.items():
+                for part in parts:
+                    module_lookup[part] = module_key
+            interface_mate_ids = set(module_boundaries.interface_mates.keys())
+
         def find(i):
             if parent_map[i] == i:
                 return i
@@ -173,10 +188,25 @@ class CondensedRobot(Robot):
             if root_i != root_j:
                 parent_map[root_i] = root_j
 
+        def get_mate_id(mate):
+            if mate is None:
+                return None
+            mate_id = getattr(mate, "id", None)
+            if mate_id is None and isinstance(mate, dict):
+                mate_id = mate.get("id")
+            return mate_id
+
         # Union nodes connected by non-joint edges
         for u, v, mate in _iter_edges(kinematic_graph):
-            if not is_joint_mate(mate):
-                union(u, v)
+            if is_joint_mate(mate):
+                continue
+            if module_boundaries is not None:
+                mate_id = get_mate_id(mate)
+                if mate_id is not None and mate_id in interface_mate_ids:
+                    continue
+                if module_lookup and module_lookup.get(u) != module_lookup.get(v):
+                    continue
+            union(u, v)
 
         # Collect groups
         groups: Dict[Any, List[Any]] = {}
@@ -280,12 +310,36 @@ class CondensedRobot(Robot):
             used_names.add(link_name)
 
             parent = None
-            root_payload = node_payload(group_root)
+            module_parent_set = False
+            if module_boundaries is not None:
+                module_parent = None
+                for node in group_nodes:
+                    if node in module_lookup:
+                        module_parent = module_lookup[node]
+                        module_parent_set = True
+                        break
+                if module_parent is root_module_token:
+                    module_parent = None
+                if module_parent_set:
+                    parent = module_parent
 
-            if root_payload is not None:
-                parent = getattr(root_payload, "parent", None)
-            if parent is None and payloads:
-                parent = getattr(payloads[0], "parent", None)
+            def _payload_parent():
+                root_payload = node_payload(group_root)
+                if root_payload is not None:
+                    payload_parent = getattr(root_payload, "parent", None)
+                else:
+                    payload_parent = None
+                if payload_parent is None and payloads:
+                    payload_parent = getattr(payloads[0], "parent", None)
+                return payload_parent
+
+            if module_parent_set:
+                if parent is None:
+                    payload_parent = _payload_parent()
+                    if payload_parent is not None:
+                        parent = payload_parent
+            else:
+                parent = _payload_parent()
 
             link_rec = LinkRecord(
                 part_ids=part_ids,
@@ -336,7 +390,7 @@ class CondensedRobot(Robot):
             for _, occ in zip(link_rec.keys, link_rec.occurrences):
                 found = False
 
-                tf = cad.get_transform(occ)
+                tf = cad.get_transform(cast(Any, occ))
                 if tf is not None:
                     if not np.allclose(tf[3, :], [0, 0, 0, 1]) and np.allclose(
                         tf[:, 3], [0, 0, 0, 1]
@@ -351,13 +405,18 @@ class CondensedRobot(Robot):
         queue = list(roots)
         visited = set(roots)
         if len(queue) > 1:
-            raise RuntimeError(
-                f"Multiple root links found: {roots}. Robot must have a single root."
+            if module_boundaries is None:
+                raise RuntimeError(
+                    f"Multiple root links found: {roots}. Robot must have a single root."
+                )
+            logger.warning(
+                "Multiple root links found in modular mode; continuing with a forest: "
+                f"{roots}"
             )
         while queue:
             curr_name = queue.pop(0)
             curr_link = link_to_rec[curr_name]
-            T_WC = curr_link.frame_transform
+            t_wc = curr_link.frame_transform
 
             for next_name, mate in link_tree[curr_name]:
                 if next_name in visited:
@@ -418,7 +477,7 @@ class CondensedRobot(Robot):
 
                 # We need the world transform of this part
                 found_part = False
-                parent_part_world = cad.get_transform(parent_key)
+                parent_part_world = cad.get_transform(cast(PathKey, parent_key))
                 if parent_part_world is not None:
                     # Normalize
                     if not np.allclose(
@@ -518,11 +577,11 @@ class CondensedRobot(Robot):
 
                 # Joint origin = transform from parent link frame to joint world frame (Zero Pose)
                 # We use T_WJ (which represents the joint frame at zero pose on the parent side)
-                if T_WC is None:
-                    T_WC = np.eye(4)
-                T_origin_mat = np.linalg.inv(T_WC) @ T_WJ
+                if t_wc is None:
+                    t_wc = np.eye(4)
+                T_origin_mat = np.linalg.inv(t_wc) @ T_WJ
 
-                joint_origin = Origin.from_matrix(T_origin_mat)
+                joint_origin = Origin.from_matrix(cast(Any, T_origin_mat))
 
                 mate_limits = getattr(mate, "limits", None)
 
@@ -622,7 +681,7 @@ class CondensedRobot(Robot):
 
                 # Create Joint Record (Fixed)
                 joint_name = f"fixed_{new_link_name}"
-                joint_origin = Origin.from_matrix(T_link_mc)
+                joint_origin = Origin.from_matrix(cast(Any, T_link_mc))
 
                 joint_rec = JointRecord(
                     name=joint_name,

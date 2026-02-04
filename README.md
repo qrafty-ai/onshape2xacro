@@ -9,6 +9,7 @@ Existing exporters often output flat URDFs or require numerous API calls that ca
 - **Easier to change values in Xacro**: Outputs clean Xacro files instead of flat URDFs. This makes it trivial to tweak joint limits, colors, or physics parameters directly in the code without re-exporting. Also, the generated xacro macro makes it easier to integrate the robot into the project and reduce post-processing need.
 - **Saves API calls via Local Processing**: Instead of downloading each part individually via the API, it fetches the entire assembly as a STEP file once. All mesh extraction and inertia calculations are then performed locally using the STEP data, resulting in a much faster and more reliable pipeline.
 - **Auto-link Merging**: Automatically identifies and merges parts that are fixed together in Onshape. This produces a clean, simplified kinematic tree that matches how the robot is actually controlled, rather than having a link for every single screw.
+- **Modular Export**: Optionally mirrors Onshape's subassembly hierarchy, creating reusable Xacro macros and organized file structures for complex robots.
 
 ## Installation
 
@@ -61,10 +62,39 @@ The export workflow is broken down into modular steps to give you full control o
 4. **Export**: Generate the final Xacro description.
 
     ```bash
-    onshape2xacro export <local_dir> --output <final_xacro_dir>
+    onshape2xacro export <local_dir> --output <final_xacro_dir> --format xacro
     ```
 
     This processes the local assets, calculates inertias based on geometry and material density, extracts visual/collision meshes, and writes the Xacro files.
+
+    ### Export Formats
+
+    The tool supports two primary export formats via the `--format` option:
+
+    - **`xacro` (Default)**: Generates a monolithic Xacro file. All links and joints are defined in a single file (or a small set of files), similar to traditional exporters.
+    - **`xacro_module`**: Generates a **modular, hierarchical** Xacro description that mirrors your Onshape assembly structure.
+
+    #### Benefits of Modular Export (`xacro_module`)
+
+    - **Mirror CAD Hierarchy**: Each subassembly in Onshape is exported as a standalone Xacro macro in its own directory.
+    - **Reusability**: If you use the same subassembly multiple times in Onshape (e.g., four identical legs), it is defined once and instantiated multiple times in Xacro.
+    - **Clean Configuration**: Joint limits and inertial properties are stored in separate YAML files within each module's `config/` directory and loaded dynamically.
+    - **Isolated Meshes**: Each module keeps its own meshes in a local `meshes/` folder, making the file structure much easier to navigate.
+
+    Example modular structure:
+    ```text
+    output/
+    └── urdf/
+        ├── robot.urdf.xacro        # Main entry point
+        ├── robot.xacro             # Root assembly module
+        ├── leg/
+        │   ├── leg.xacro           # Leg subassembly macro
+        │   ├── config/             # Joint limits and inertials for leg
+        │   └── meshes/             # Meshes used by leg
+        └── arm/
+            ├── arm.xacro
+            └── ...
+    ```
 
 5. **BOM Export** (Optional):
     For inertial calculation, you can provide a Bill of Materials (BOM) CSV to specify material densities and mass for different parts:
@@ -79,6 +109,14 @@ The export workflow is broken down into modular steps to give you full control o
     The inertia calculation assumes that the part's mass is uniformly distributed (which is true for metals but not the case for 3D-printed parts).
 
     To debug the inertial calculation, inspect the generated `inertia_debug.md` file in the output directory and compare with [calculated values](https://cad.onshape.com/help/Content/massprops-asmb.htm?cshid=massprops_assembly) from onshape.
+
+### Other Export Options
+
+- `--visual-mesh-format {obj,dae,glb,stl}`: Choose the format for visual meshes (default: `obj`).
+- `--collision-method {fast,coacd}`:
+    - `fast`: Uses the simplified visual mesh as collision geometry.
+    - `coacd`: Uses Approximate Convex Decomposition (CoACD) to generate high-quality convex collision hulls.
+- `--max-depth <int>`: Limit how deep the tool traverses into subassemblies (default: 5).
 
 ## Limitation
 

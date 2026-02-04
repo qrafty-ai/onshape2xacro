@@ -155,6 +155,13 @@ def run_export(
     print("Building kinematic graph...")
     graph = KinematicGraph.from_cad(cad)
 
+    format = export_configuration.export.format
+    module_boundaries = None
+    if format == "xacro_module":
+        from onshape2xacro.module_boundary import detect_module_boundaries
+
+        module_boundaries = detect_module_boundaries(cad, graph)
+
     # 4. Create Robot Model
     print("Creating robot model...")
     robot_name = export_configuration.export.name
@@ -185,12 +192,15 @@ def run_export(
         link_name_overrides=export_configuration.link_names,
         # Pass fail_fast parameter derived from debug configuration
         fail_fast=getattr(config, "debug", False),
+        module_boundaries=module_boundaries,
     )
     # Set client and cad for serializer's mesh export
 
     robot.client = client
     robot.cad = cad
     robot.asset_path = asset_path
+    if module_boundaries is not None:
+        robot.module_boundaries = module_boundaries
 
     # 5. Load Config Overrides
     print("Loading configuration overrides...")
@@ -201,7 +211,19 @@ def run_export(
     visual_mesh_format = export_configuration.export.visual_mesh_format
 
     print(f"Serializing to {output_path}...")
-    serializer = XacroSerializer()
+    if format == "xacro_module":
+        try:
+            from onshape2xacro.serializers.modular import ModularXacroSerializer
+
+            serializer = ModularXacroSerializer()
+        except ImportError:
+            raise NotImplementedError(
+                f"Format '{format}' is not yet implemented. "
+                "ModularXacroSerializer not found."
+            )
+    else:
+        serializer = XacroSerializer()
+
     serializer.save(
         robot,
         str(output_path),

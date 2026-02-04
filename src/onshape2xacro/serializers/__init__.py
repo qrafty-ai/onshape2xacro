@@ -154,6 +154,7 @@ class XacroSerializer(RobotSerializer):
                 mesh_map,
                 children,
                 mesh_rel_path=mesh_rel_path,
+                module_name=name,
             )
 
             with open(module_path, "w") as f:
@@ -214,7 +215,7 @@ class XacroSerializer(RobotSerializer):
                 missing_meshes, mesh_dir_path, robot, out_dir
             )
 
-    def _group_by_subassembly(self, robot: "Robot") -> Dict[Any, Dict[str, List]]:
+    def _group_by_subassembly(self, robot: "Robot") -> Dict[Any, Dict[str, List[Any]]]:
         groups = {}
         # PathKey objects in networkx graph
         for node, data in robot.nodes(data=True):
@@ -252,11 +253,12 @@ class XacroSerializer(RobotSerializer):
         self,
         root: ET._Element,
         name: str,
-        elements: Dict,
+        elements: Dict[str, List[Any]],
         config: ConfigOverride,
         mesh_map: Dict[str, str | Dict[str, str | List[str]]],
-        children: List,
+        children: List[Any],
         mesh_rel_path: str = "meshes",
+        module_name: Optional[str] = None,
     ):
         macro = ET.SubElement(root, "{http://www.ros.org/wiki/xacro}macro")
         macro.set("name", sanitize_name(name))
@@ -265,17 +267,26 @@ class XacroSerializer(RobotSerializer):
         for link in elements["links"]:
             if link:
                 self._link_to_xacro(
-                    macro, link, config, mesh_map, mesh_rel_path=mesh_rel_path
+                    macro,
+                    link,
+                    config,
+                    mesh_map,
+                    mesh_rel_path=mesh_rel_path,
+                    module_name=module_name,
                 )
 
         for joint in elements["joints"]:
             if joint:
                 if is_joint(joint.name):
                     # Export as movable joint (revolute/prismatic)
-                    self._joint_to_xacro(macro, joint, config, force_fixed=False)
+                    self._joint_to_xacro(
+                        macro, joint, config, force_fixed=False, module_name=module_name
+                    )
                 else:
                     # Export as fixed joint for fasten mates and other non-joint connections
-                    self._joint_to_xacro(macro, joint, config, force_fixed=True)
+                    self._joint_to_xacro(
+                        macro, joint, config, force_fixed=True, module_name=module_name
+                    )
 
         # Call children macros
         for child in children:
@@ -377,7 +388,12 @@ class XacroSerializer(RobotSerializer):
             link = data.get("link") or data.get("data")
             if link:
                 self._link_to_xacro(
-                    macro, link, config, mesh_map, mesh_rel_path=mesh_rel_path
+                    macro,
+                    link,
+                    config,
+                    mesh_map,
+                    mesh_rel_path=mesh_rel_path,
+                    module_name=None,
                 )
 
         for parent, child in robot.edges:
@@ -386,10 +402,14 @@ class XacroSerializer(RobotSerializer):
             if joint:
                 if is_joint(joint.name):
                     # Export as movable joint (revolute/prismatic)
-                    self._joint_to_xacro(macro, joint, config, force_fixed=False)
+                    self._joint_to_xacro(
+                        macro, joint, config, force_fixed=False, module_name=None
+                    )
                 else:
                     # Export as fixed joint for fasten mates and other non-joint connections
-                    self._joint_to_xacro(macro, joint, config, force_fixed=True)
+                    self._joint_to_xacro(
+                        macro, joint, config, force_fixed=True, module_name=None
+                    )
 
     def _link_to_xacro(
         self,
@@ -398,31 +418,36 @@ class XacroSerializer(RobotSerializer):
         config: ConfigOverride,
         mesh_map: Dict[str, str | Dict[str, str | List[str]]],
         mesh_rel_path: str = "meshes",
+        module_name: Optional[str] = None,
     ):
         name = sanitize_name(link.name)
         link_el = ET.SubElement(root, "link")
         link_el.set("name", f"${{prefix}}{name}")
 
+        prop_name = f"{module_name}_" if module_name else ""
+
         # Use runtime YAML configuration for inertials
         inertial = ET.SubElement(link_el, "inertial")
-        ET.SubElement(inertial, "mass", value=f"${{inertials['{name}']['mass']}}")
+        ET.SubElement(
+            inertial, "mass", value=f"${{{prop_name}inertials['{name}']['mass']}}"
+        )
 
         ET.SubElement(
             inertial,
             "origin",
-            xyz=f"${{inertials['{name}']['origin']['xyz']}}",
-            rpy=f"${{inertials['{name}']['origin']['rpy']}}",
+            xyz=f"${{{prop_name}inertials['{name}']['origin']['xyz']}}",
+            rpy=f"${{{prop_name}inertials['{name}']['origin']['rpy']}}",
         )
 
         ET.SubElement(
             inertial,
             "inertia",
-            ixx=f"${{inertials['{name}']['inertia']['ixx']}}",
-            iyy=f"${{inertials['{name}']['inertia']['iyy']}}",
-            izz=f"${{inertials['{name}']['inertia']['izz']}}",
-            ixy=f"${{inertials['{name}']['inertia']['ixy']}}",
-            ixz=f"${{inertials['{name}']['inertia']['ixz']}}",
-            iyz=f"${{inertials['{name}']['inertia']['iyz']}}",
+            ixx=f"${{{prop_name}inertials['{name}']['inertia']['ixx']}}",
+            iyy=f"${{{prop_name}inertials['{name}']['inertia']['iyy']}}",
+            izz=f"${{{prop_name}inertials['{name}']['inertia']['izz']}}",
+            ixy=f"${{{prop_name}inertials['{name}']['inertia']['ixy']}}",
+            ixz=f"${{{prop_name}inertials['{name}']['inertia']['ixz']}}",
+            iyz=f"${{{prop_name}inertials['{name}']['inertia']['iyz']}}",
         )
 
         if name in mesh_map:
@@ -464,6 +489,7 @@ class XacroSerializer(RobotSerializer):
         joint: JointRecord,
         config: ConfigOverride,
         force_fixed: bool = False,
+        module_name: Optional[str] = None,
     ):
         # For non-joint_* mates, use the original name (not removing joint_ prefix)
         if force_fixed:
@@ -508,6 +534,8 @@ class XacroSerializer(RobotSerializer):
             joint_el, "child", link=f"${{prefix}}{sanitize_name(joint.child)}"
         )
 
+        prop_name = f"{module_name}_" if module_name else ""
+
         # Update joint limits and axis if it's a movable joint
         if jtype in ["revolute", "prismatic", "continuous"]:
             axis_xyz = f"{joint.axis[0]} {joint.axis[1]} {joint.axis[2]}"
@@ -518,17 +546,17 @@ class XacroSerializer(RobotSerializer):
             ET.SubElement(
                 joint_el,
                 "limit",
-                lower=f"${{joint_limits['{name}']['lower']}}",
-                upper=f"${{joint_limits['{name}']['upper']}}",
-                effort=f"${{joint_limits['{name}']['effort']}}",
-                velocity=f"${{joint_limits['{name}']['velocity']}}",
+                lower=f"${{{prop_name}joint_limits['{name}']['lower']}}",
+                upper=f"${{{prop_name}joint_limits['{name}']['upper']}}",
+                effort=f"${{{prop_name}joint_limits['{name}']['effort']}}",
+                velocity=f"${{{prop_name}joint_limits['{name}']['velocity']}}",
             )
             # Add dynamics from runtime YAML configuration
             ET.SubElement(
                 joint_el,
                 "dynamics",
-                damping=f"${{joint_limits['{name}']['damping']}}",
-                friction=f"${{joint_limits['{name}']['friction']}}",
+                damping=f"${{{prop_name}joint_limits['{name}']['damping']}}",
+                friction=f"${{{prop_name}joint_limits['{name}']['friction']}}",
             )
 
         # Append to root
@@ -541,8 +569,9 @@ class XacroSerializer(RobotSerializer):
         visual_mesh_format: str = "obj",
         bom_path: Optional[Path] = None,
         collision_option: Optional[CollisionOptions] = None,
+        module_mesh_dirs: Optional[Dict[Any, Path]] = None,
     ) -> tuple[
-        dict[str, str | dict[str, str | list[str]]],
+        dict[Any, str | dict[str, str | list[str]]],
         dict[str, list[dict[str, str]]],
         Optional["InertiaReport"],
     ]:
@@ -567,6 +596,7 @@ class XacroSerializer(RobotSerializer):
                 bom_path=bom_path,
                 visual_mesh_format=visual_mesh_format,
                 collision_option=collision_option,
+                module_mesh_dirs=module_mesh_dirs,
             )
             return mesh_map, missing_meshes, report
 

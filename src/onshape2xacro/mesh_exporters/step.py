@@ -4,6 +4,8 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, TYPE_CHECKING
 
+from onshape2xacro.module_boundary import get_direct_module, to_path_tuple
+
 if TYPE_CHECKING:
     from onshape2xacro.inertia import InertiaReport
 
@@ -555,8 +557,9 @@ class StepMeshExporter:
         bom_path: Optional[Path] = None,
         visual_mesh_format: str = "obj",
         collision_option: Optional[CollisionOptions] = None,
+        module_mesh_dirs: Optional[Dict[Any, Path]] = None,
     ) -> Tuple[
-        Dict[str, str | Dict[str, str | List[str]]],
+        Dict[Any, str | Dict[str, str | List[str]]],
         Dict[str, List[Dict[str, str]]],
         Optional["InertiaReport"],
     ]:
@@ -564,7 +567,7 @@ class StepMeshExporter:
 
         Returns:
             Tuple of (mesh_map, missing_meshes, inertia_report) where:
-            - mesh_map: Dict mapping link_name -> {"visual": path, "collision": path or [paths]}
+            - mesh_map: Dict mapping link_name (or (module, link_name)) -> {"visual": path, "collision": path or [paths]}
             - missing_meshes: Dict mapping link_name -> list of missing part info dicts
             - inertia_report: Optional InertiaReport containing computed mass properties
         """
@@ -577,6 +580,12 @@ class StepMeshExporter:
         mesh_dir.mkdir(parents=True, exist_ok=True)
         (mesh_dir / "visual").mkdir(parents=True, exist_ok=True)
         (mesh_dir / "collision").mkdir(parents=True, exist_ok=True)
+
+        if module_mesh_dirs:
+            for m_dir in module_mesh_dirs.values():
+                m_dir.mkdir(parents=True, exist_ok=True)
+                (m_dir / "visual").mkdir(parents=True, exist_ok=True)
+                (m_dir / "collision").mkdir(parents=True, exist_ok=True)
 
         if collision_option is None:
             collision_option = CollisionOptions(method="fast")
@@ -675,7 +684,7 @@ class StepMeshExporter:
                 )
 
         stl_writer = StlAPI_Writer()
-        mesh_map: Dict[str, str | Dict[str, str | List[str]]] = {}
+        mesh_map: Dict[Any, str | Dict[str, str | List[str]]] = {}
         missing_meshes: Dict[str, List[Dict[str, str]]] = {}
 
         occ_path_to_name: Dict[Tuple[str, ...], str] = {}
@@ -721,10 +730,30 @@ class StepMeshExporter:
 
         coacd_tasks = []
 
+        subassembly_keys = {to_path_tuple(k) for k in self.cad.subassemblies.keys()}
+
         for link_name, link in link_records.items():
             keys = link.keys
             if not keys:
                 continue
+
+            link_module = None
+            if keys:
+                part_path = to_path_tuple(keys[0])
+                link_module_path = get_direct_module(part_path, subassembly_keys)
+                if link_module_path:
+                    link_module = next(
+                        (
+                            k
+                            for k in self.cad.subassemblies.keys()
+                            if to_path_tuple(k) == link_module_path
+                        ),
+                        None,
+                    )
+
+            effective_mesh_dir = mesh_dir
+            if module_mesh_dirs and link_module in module_mesh_dirs:
+                effective_mesh_dir = module_mesh_dirs[link_module]
 
             # Use CAD-derived transforms (same as ZIP path) for consistency with joint origins.
             # The STEP shapes are in local part coordinates, so we use CAD API transforms
@@ -874,12 +903,14 @@ class StepMeshExporter:
                 BRepMesh_IncrementalMesh(compound, self.deflection)
 
                 # Generate intermediate high-res STL
-                temp_stl = mesh_dir / f"{link_name}_raw.stl"
+                temp_stl = effective_mesh_dir / f"{link_name}_raw.stl"
                 stl_writer.Write(compound, str(temp_stl))
 
                 if report is not None and calc is not None:
                     try:
-                        temp_step_inertia = mesh_dir / f"{link_name}_inertia.step"
+                        temp_step_inertia = (
+                            effective_mesh_dir / f"{link_name}_inertia.step"
+                        )
                         step_writer = STEPControl_Writer()
                         step_writer.Transfer(compound, STEPControl_AsIs)
                         step_writer.Write(str(temp_step_inertia))
@@ -908,7 +939,7 @@ class StepMeshExporter:
                 # Process with trimesh
                 try:
                     vis_filename = f"visual/{link_name}.{visual_mesh_format}"
-                    vis_path = mesh_dir / vis_filename
+                    vis_path = effective_mesh_dir / vis_filename
 
                     try:
                         if visual_mesh_format == "stl":
@@ -938,7 +969,7 @@ class StepMeshExporter:
                                 ):
                                     # Export part_shape to temp STL
                                     part_stl_path = (
-                                        mesh_dir / f"{link_name}_part_{i}.stl"
+                                        effective_mesh_dir / f"{link_name}_part_{i}.stl"
                                     )
                                     stl_writer.Write(part_shape, str(part_stl_path))
 
@@ -961,7 +992,9 @@ class StepMeshExporter:
                                     if visual_mesh_format == "dae":
                                         # trimesh DAE export does not support vertex colors well (single material).
                                         # Use pymeshlab to convert OBJ (which supports colors) to DAE with vertex colors.
-                                        temp_obj = mesh_dir / f"{link_name}_temp.obj"
+                                        temp_obj = (
+                                            effective_mesh_dir / f"{link_name}_temp.obj"
+                                        )
                                         combined.export(str(temp_obj), file_type="obj")
 
                                         try:
@@ -991,12 +1024,17 @@ class StepMeshExporter:
                         collision_filenames = []
                         if collision_option.method == "coacd":
                             coacd_tasks.append(
-                                (link_name, temp_stl, collision_option.coacd, mesh_dir)
+                                (
+                                    link_name,
+                                    temp_stl,
+                                    collision_option.coacd,
+                                    effective_mesh_dir,
+                                )
                             )
                             col_result = []  # Placeholder
                         elif collision_option.method == "fast":
                             col_filename = f"collision/{link_name}_0.stl"
-                            col_path = mesh_dir / col_filename
+                            col_path = effective_mesh_dir / col_filename
                             try:
                                 import pymeshlab
 
@@ -1027,7 +1065,7 @@ class StepMeshExporter:
                             and collision_option.method != "coacd"
                         ):
                             col_filename = f"collision/{link_name}_0.stl"
-                            col_path = mesh_dir / col_filename
+                            col_path = effective_mesh_dir / col_filename
                             import shutil
 
                             shutil.copy(temp_stl, col_path)
@@ -1039,7 +1077,7 @@ class StepMeshExporter:
                         print(f"Error creating collision mesh for {link_name}: {e}")
                         # Fallback to single convex hull (pymeshlab or trimesh)
                         col_filename = f"collision/{link_name}_0.stl"
-                        col_path = mesh_dir / col_filename
+                        col_path = effective_mesh_dir / col_filename
                         try:
                             import shutil
 
@@ -1049,7 +1087,10 @@ class StepMeshExporter:
                         col_result = [col_filename]
 
                     # Store both
-                    mesh_map[link_name] = {
+                    mesh_key = (
+                        (link_module, link_name) if module_mesh_dirs else link_name
+                    )
+                    mesh_map[mesh_key] = {
                         "visual": vis_filename,
                         "collision": col_result,
                     }
@@ -1061,10 +1102,13 @@ class StepMeshExporter:
                 except Exception as e:
                     print(f"Error processing mesh for {link_name}: {e}")
                     # Fallback to original STL behavior if trimesh fails
-                    final_stl = mesh_dir / "visual" / f"{link_name}.stl"
+                    final_stl = effective_mesh_dir / "visual" / f"{link_name}.stl"
                     if temp_stl.exists():
                         temp_stl.rename(final_stl)
-                    mesh_map[link_name] = f"visual/{final_stl.name}"
+                    mesh_key = (
+                        (link_module, link_name) if module_mesh_dirs else link_name
+                    )
+                    mesh_map[mesh_key] = f"visual/{final_stl.name}"
 
         if coacd_tasks:
             logger.info(
@@ -1075,13 +1119,40 @@ class StepMeshExporter:
             ) as executor:
                 results = executor.map(_process_coacd_task, coacd_tasks)
                 for link_name, col_filenames in results:
-                    if link_name in mesh_map:
-                        entry = mesh_map[link_name]
+                    # Find which module this link belongs to for coacd task resolution
+                    link = link_records.get(link_name)
+                    link_module = None
+                    if link and link.keys:
+                        part_path = to_path_tuple(link.keys[0])
+                        link_module_path = get_direct_module(
+                            part_path, subassembly_keys
+                        )
+                        if link_module_path:
+                            link_module = next(
+                                (
+                                    k
+                                    for k in self.cad.subassemblies.keys()
+                                    if to_path_tuple(k) == link_module_path
+                                ),
+                                None,
+                            )
+
+                    mesh_key = (
+                        (link_module, link_name) if module_mesh_dirs else link_name
+                    )
+                    if mesh_key in mesh_map:
+                        entry = mesh_map[mesh_key]
                         if isinstance(entry, dict):
                             entry["collision"] = col_filenames
 
                     # Clean up temp STL
-                    temp_stl_path = mesh_dir / f"{link_name}_raw.stl"
+                    # We need the correct effective_mesh_dir here too
+                    eff_mesh_dir = (
+                        module_mesh_dirs.get(link_module, mesh_dir)
+                        if module_mesh_dirs
+                        else mesh_dir
+                    )
+                    temp_stl_path = eff_mesh_dir / f"{link_name}_raw.stl"
                     if temp_stl_path.exists():
                         temp_stl_path.unlink()
 
