@@ -20,7 +20,7 @@ def test_cli_overrides(tmp_path):
     # Create a config file with specific settings
     config = ExportConfiguration(
         export=ExportOptions(
-            name="file_robot", visual_mesh_format="stl", output=Path("file_output")
+            name="file_robot", visual_mesh_formats=["stl"], output=Path("file_output")
         )
     )
     config.save(config_path)
@@ -30,7 +30,14 @@ def test_cli_overrides(tmp_path):
         patch("onshape2xacro.pipeline.run_export") as mock_run_export,
         patch(
             "sys.argv",
-            ["onshape2xacro", "export", str(input_dir), "--visual-mesh-format", "glb"],
+            [
+                "onshape2xacro",
+                "export",
+                str(input_dir),
+                "--visual-mesh-formats",
+                "glb",
+                "--skip-confirmation",
+            ],
         ),
     ):
         main()
@@ -40,7 +47,7 @@ def test_cli_overrides(tmp_path):
         export_config = kwargs["export_configuration"]
 
         # Verify CLI override: should be glb (from CLI) not stl (from file)
-        assert export_config.export.visual_mesh_format == "glb"
+        assert export_config.export.visual_mesh_formats == ["glb"]
 
         # Verify file preservation: name should still be file_robot
         assert export_config.export.name == "file_robot"
@@ -65,7 +72,10 @@ def test_cli_bom_autodetect(tmp_path):
         patch(
             "onshape2xacro.config.export_config.ExportConfiguration.load"
         ) as mock_load,
-        patch("sys.argv", ["onshape2xacro", "export", str(input_dir)]),
+        patch(
+            "sys.argv",
+            ["onshape2xacro", "export", str(input_dir), "--skip-confirmation"],
+        ),
     ):
         mock_config_obj = MagicMock()
         mock_config_obj.export.bom = None
@@ -117,6 +127,7 @@ def test_cli_coacd_override(tmp_path):
                 str(input_dir),
                 "--collision-option.coacd.max-workers",
                 "20",
+                "--skip-confirmation",
             ],
         ),
     ):

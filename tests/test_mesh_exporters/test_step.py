@@ -109,7 +109,7 @@ def test_step_export_visual_formats(tmp_path):
             ):
                 mock_concat.return_value = mock_mesh
                 exporter.export_link_meshes(
-                    link_records, mesh_dir, visual_mesh_format="dae"
+                    link_records, mesh_dir, visual_mesh_formats=["dae"]
                 )
 
                 # Verify color was applied
@@ -147,6 +147,6 @@ def test_step_export_visual_formats(tmp_path):
             ):
                 mock_concat.return_value = mock_mesh
                 exporter.export_link_meshes(
-                    link_records, mesh_dir, visual_mesh_format="obj"
+                    link_records, mesh_dir, visual_mesh_formats=["obj"]
                 )
             mock_mesh.export.assert_called_with(ANY, file_type="obj")

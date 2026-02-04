@@ -198,7 +198,7 @@ def test_step_export_with_concurrent_coacd(tmp_path):
                 link_records,
                 mesh_dir,
                 collision_option=collision_opts,
-                visual_mesh_format="stl",
+                visual_mesh_formats=["stl"],
             )
 
             # Verify executor usage
@@ -208,6 +208,11 @@ def test_step_export_with_concurrent_coacd(tmp_path):
             assert mock_executor_instance.map.called
 
             # Verify results updated
+            # mesh_map returns Dict[str, str | Dict[str, str | List[str] | Dict[str, str]]]
+            # For coacd, we expect collision to be a list of files
+            # But wait, type checker says it expects SupportsIndex or slice?
+            # It seems the type inference for mesh_map is confusing due to complex return type.
+            # But at runtime it should work if it's a dict.
             assert mesh_map["link1"]["collision"] == [
                 "collision/link1_0.stl",
                 "collision/link1_1.stl",

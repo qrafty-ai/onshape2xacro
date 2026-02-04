@@ -108,7 +108,7 @@ def test_full_config_workflow(monkeypatch, tmp_path):
         def save(self, robot, output, download_assets, **kwargs):
             saved_args["robot"] = robot
             saved_args["output"] = output
-            saved_args["visual_mesh_format"] = kwargs.get("visual_mesh_format")
+            saved_args["visual_mesh_formats"] = kwargs.get("visual_mesh_formats")
             # Verify overridden link name is passed to CondensedRobot
 
     monkeypatch.setattr(pipeline, "XacroSerializer", MockSerializer)
@@ -134,8 +134,9 @@ def test_full_config_workflow(monkeypatch, tmp_path):
             str(export_output),
             "--name",
             "cli_robot_name",
-            "--visual-mesh-format",
+            "--visual-mesh-formats",
             "obj",
+            "--skip-confirmation",
         ],
     )
     main()
@@ -144,7 +145,7 @@ def test_full_config_workflow(monkeypatch, tmp_path):
     assert saved_args["link_name_overrides"]["base_link"] == "overridden_base"
     assert saved_args["robot"].name == "cli_robot_name"
     assert saved_args["output"] == str(export_output)
-    assert saved_args["visual_mesh_format"] == "obj"
+    assert saved_args["visual_mesh_formats"] == ["obj"]
 
 
 def test_export_remote_url_deprecation(monkeypatch, tmp_path):

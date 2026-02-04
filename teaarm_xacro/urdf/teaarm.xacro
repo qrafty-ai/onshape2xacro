@@ -1,0 +1,1181 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="teaarm">
+  <xacro:macro name="teaarm" params="prefix:='' visual_mesh_ext:='glb'">
+    <link name="${prefix}base_link">
+      <inertial>
+        <mass value="${inertials['base_link']['mass']}"/>
+        <origin xyz="${inertials['base_link']['origin']['xyz']}" rpy="${inertials['base_link']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['base_link']['inertia']['ixx']}" iyy="${inertials['base_link']['inertia']['iyy']}" izz="${inertials['base_link']['inertia']['izz']}" ixy="${inertials['base_link']['inertia']['ixy']}" ixz="${inertials['base_link']['inertia']['ixz']}" iyz="${inertials['base_link']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/base_link.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/base_link_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/base_link_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/base_link_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/base_link_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/base_link_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/base_link_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/base_link_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/base_link_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}waist_link">
+      <inertial>
+        <mass value="${inertials['waist_link']['mass']}"/>
+        <origin xyz="${inertials['waist_link']['origin']['xyz']}" rpy="${inertials['waist_link']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['waist_link']['inertia']['ixx']}" iyy="${inertials['waist_link']['inertia']['iyy']}" izz="${inertials['waist_link']['inertia']['izz']}" ixy="${inertials['waist_link']['inertia']['ixy']}" ixz="${inertials['waist_link']['inertia']['ixz']}" iyz="${inertials['waist_link']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/waist_link.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/waist_link_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/waist_link_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/waist_link_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/waist_link_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/waist_link_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/waist_link_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/waist_link_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/waist_link_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}torso_link">
+      <inertial>
+        <mass value="${inertials['torso_link']['mass']}"/>
+        <origin xyz="${inertials['torso_link']['origin']['xyz']}" rpy="${inertials['torso_link']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['torso_link']['inertia']['ixx']}" iyy="${inertials['torso_link']['inertia']['iyy']}" izz="${inertials['torso_link']['inertia']['izz']}" ixy="${inertials['torso_link']['inertia']['ixy']}" ixz="${inertials['torso_link']['inertia']['ixz']}" iyz="${inertials['torso_link']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/torso_link.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/torso_link_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/torso_link_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/torso_link_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/torso_link_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/torso_link_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/torso_link_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}left_arm_l1">
+      <inertial>
+        <mass value="${inertials['left_arm_l1']['mass']}"/>
+        <origin xyz="${inertials['left_arm_l1']['origin']['xyz']}" rpy="${inertials['left_arm_l1']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['left_arm_l1']['inertia']['ixx']}" iyy="${inertials['left_arm_l1']['inertia']['iyy']}" izz="${inertials['left_arm_l1']['inertia']['izz']}" ixy="${inertials['left_arm_l1']['inertia']['ixy']}" ixz="${inertials['left_arm_l1']['inertia']['ixz']}" iyz="${inertials['left_arm_l1']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/left_arm_l1.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l1_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l1_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l1_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l1_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l1_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l1_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l1_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l1_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}right_arm_l1">
+      <inertial>
+        <mass value="${inertials['right_arm_l1']['mass']}"/>
+        <origin xyz="${inertials['right_arm_l1']['origin']['xyz']}" rpy="${inertials['right_arm_l1']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['right_arm_l1']['inertia']['ixx']}" iyy="${inertials['right_arm_l1']['inertia']['iyy']}" izz="${inertials['right_arm_l1']['inertia']['izz']}" ixy="${inertials['right_arm_l1']['inertia']['ixy']}" ixz="${inertials['right_arm_l1']['inertia']['ixz']}" iyz="${inertials['right_arm_l1']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/right_arm_l1.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l1_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l1_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l1_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l1_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l1_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l1_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l1_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l1_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}left_arm_l2">
+      <inertial>
+        <mass value="${inertials['left_arm_l2']['mass']}"/>
+        <origin xyz="${inertials['left_arm_l2']['origin']['xyz']}" rpy="${inertials['left_arm_l2']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['left_arm_l2']['inertia']['ixx']}" iyy="${inertials['left_arm_l2']['inertia']['iyy']}" izz="${inertials['left_arm_l2']['inertia']['izz']}" ixy="${inertials['left_arm_l2']['inertia']['ixy']}" ixz="${inertials['left_arm_l2']['inertia']['ixz']}" iyz="${inertials['left_arm_l2']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/left_arm_l2.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l2_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l2_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l2_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l2_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l2_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l2_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l2_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l2_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}right_arm_l2">
+      <inertial>
+        <mass value="${inertials['right_arm_l2']['mass']}"/>
+        <origin xyz="${inertials['right_arm_l2']['origin']['xyz']}" rpy="${inertials['right_arm_l2']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['right_arm_l2']['inertia']['ixx']}" iyy="${inertials['right_arm_l2']['inertia']['iyy']}" izz="${inertials['right_arm_l2']['inertia']['izz']}" ixy="${inertials['right_arm_l2']['inertia']['ixy']}" ixz="${inertials['right_arm_l2']['inertia']['ixz']}" iyz="${inertials['right_arm_l2']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/right_arm_l2.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l2_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l2_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l2_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l2_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l2_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l2_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l2_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l2_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}left_arm_l3">
+      <inertial>
+        <mass value="${inertials['left_arm_l3']['mass']}"/>
+        <origin xyz="${inertials['left_arm_l3']['origin']['xyz']}" rpy="${inertials['left_arm_l3']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['left_arm_l3']['inertia']['ixx']}" iyy="${inertials['left_arm_l3']['inertia']['iyy']}" izz="${inertials['left_arm_l3']['inertia']['izz']}" ixy="${inertials['left_arm_l3']['inertia']['ixy']}" ixz="${inertials['left_arm_l3']['inertia']['ixz']}" iyz="${inertials['left_arm_l3']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/left_arm_l3.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l3_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l3_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l3_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l3_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l3_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l3_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l3_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l3_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}right_arm_l3">
+      <inertial>
+        <mass value="${inertials['right_arm_l3']['mass']}"/>
+        <origin xyz="${inertials['right_arm_l3']['origin']['xyz']}" rpy="${inertials['right_arm_l3']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['right_arm_l3']['inertia']['ixx']}" iyy="${inertials['right_arm_l3']['inertia']['iyy']}" izz="${inertials['right_arm_l3']['inertia']['izz']}" ixy="${inertials['right_arm_l3']['inertia']['ixy']}" ixz="${inertials['right_arm_l3']['inertia']['ixz']}" iyz="${inertials['right_arm_l3']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/right_arm_l3.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l3_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l3_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l3_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l3_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l3_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l3_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l3_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l3_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}left_arm_l4">
+      <inertial>
+        <mass value="${inertials['left_arm_l4']['mass']}"/>
+        <origin xyz="${inertials['left_arm_l4']['origin']['xyz']}" rpy="${inertials['left_arm_l4']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['left_arm_l4']['inertia']['ixx']}" iyy="${inertials['left_arm_l4']['inertia']['iyy']}" izz="${inertials['left_arm_l4']['inertia']['izz']}" ixy="${inertials['left_arm_l4']['inertia']['ixy']}" ixz="${inertials['left_arm_l4']['inertia']['ixz']}" iyz="${inertials['left_arm_l4']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/left_arm_l4.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l4_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l4_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l4_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l4_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l4_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l4_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l4_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l4_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}right_arm_l4">
+      <inertial>
+        <mass value="${inertials['right_arm_l4']['mass']}"/>
+        <origin xyz="${inertials['right_arm_l4']['origin']['xyz']}" rpy="${inertials['right_arm_l4']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['right_arm_l4']['inertia']['ixx']}" iyy="${inertials['right_arm_l4']['inertia']['iyy']}" izz="${inertials['right_arm_l4']['inertia']['izz']}" ixy="${inertials['right_arm_l4']['inertia']['ixy']}" ixz="${inertials['right_arm_l4']['inertia']['ixz']}" iyz="${inertials['right_arm_l4']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/right_arm_l4.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l4_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l4_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l4_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l4_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l4_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l4_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l4_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l4_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}left_arm_l5">
+      <inertial>
+        <mass value="${inertials['left_arm_l5']['mass']}"/>
+        <origin xyz="${inertials['left_arm_l5']['origin']['xyz']}" rpy="${inertials['left_arm_l5']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['left_arm_l5']['inertia']['ixx']}" iyy="${inertials['left_arm_l5']['inertia']['iyy']}" izz="${inertials['left_arm_l5']['inertia']['izz']}" ixy="${inertials['left_arm_l5']['inertia']['ixy']}" ixz="${inertials['left_arm_l5']['inertia']['ixz']}" iyz="${inertials['left_arm_l5']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/left_arm_l5.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l5_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l5_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l5_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l5_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l5_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l5_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l5_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l5_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}right_arm_l5">
+      <inertial>
+        <mass value="${inertials['right_arm_l5']['mass']}"/>
+        <origin xyz="${inertials['right_arm_l5']['origin']['xyz']}" rpy="${inertials['right_arm_l5']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['right_arm_l5']['inertia']['ixx']}" iyy="${inertials['right_arm_l5']['inertia']['iyy']}" izz="${inertials['right_arm_l5']['inertia']['izz']}" ixy="${inertials['right_arm_l5']['inertia']['ixy']}" ixz="${inertials['right_arm_l5']['inertia']['ixz']}" iyz="${inertials['right_arm_l5']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/right_arm_l5.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l5_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l5_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l5_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l5_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l5_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l5_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l5_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l5_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}left_arm_l6">
+      <inertial>
+        <mass value="${inertials['left_arm_l6']['mass']}"/>
+        <origin xyz="${inertials['left_arm_l6']['origin']['xyz']}" rpy="${inertials['left_arm_l6']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['left_arm_l6']['inertia']['ixx']}" iyy="${inertials['left_arm_l6']['inertia']['iyy']}" izz="${inertials['left_arm_l6']['inertia']['izz']}" ixy="${inertials['left_arm_l6']['inertia']['ixy']}" ixz="${inertials['left_arm_l6']['inertia']['ixz']}" iyz="${inertials['left_arm_l6']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/left_arm_l6.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l6_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l6_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l6_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l6_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l6_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l6_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l6_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l6_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}right_arm_l6">
+      <inertial>
+        <mass value="${inertials['right_arm_l6']['mass']}"/>
+        <origin xyz="${inertials['right_arm_l6']['origin']['xyz']}" rpy="${inertials['right_arm_l6']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['right_arm_l6']['inertia']['ixx']}" iyy="${inertials['right_arm_l6']['inertia']['iyy']}" izz="${inertials['right_arm_l6']['inertia']['izz']}" ixy="${inertials['right_arm_l6']['inertia']['ixy']}" ixz="${inertials['right_arm_l6']['inertia']['ixz']}" iyz="${inertials['right_arm_l6']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/right_arm_l6.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l6_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l6_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l6_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l6_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l6_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l6_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l6_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l6_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}left_arm_l7">
+      <inertial>
+        <mass value="${inertials['left_arm_l7']['mass']}"/>
+        <origin xyz="${inertials['left_arm_l7']['origin']['xyz']}" rpy="${inertials['left_arm_l7']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['left_arm_l7']['inertia']['ixx']}" iyy="${inertials['left_arm_l7']['inertia']['iyy']}" izz="${inertials['left_arm_l7']['inertia']['izz']}" ixy="${inertials['left_arm_l7']['inertia']['ixy']}" ixz="${inertials['left_arm_l7']['inertia']['ixz']}" iyz="${inertials['left_arm_l7']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/left_arm_l7.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l7_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l7_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l7_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l7_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l7_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l7_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l7_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/left_arm_l7_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}right_arm_l7">
+      <inertial>
+        <mass value="${inertials['right_arm_l7']['mass']}"/>
+        <origin xyz="${inertials['right_arm_l7']['origin']['xyz']}" rpy="${inertials['right_arm_l7']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['right_arm_l7']['inertia']['ixx']}" iyy="${inertials['right_arm_l7']['inertia']['iyy']}" izz="${inertials['right_arm_l7']['inertia']['izz']}" ixy="${inertials['right_arm_l7']['inertia']['ixy']}" ixz="${inertials['right_arm_l7']['inertia']['ixz']}" iyz="${inertials['right_arm_l7']['inertia']['iyz']}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/visual/right_arm_l7.${visual_mesh_ext}" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l7_0.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l7_1.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l7_2.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l7_3.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l7_4.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l7_5.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l7_6.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="../meshes/collision/right_arm_l7_7.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}frame_right_arm_ee">
+      <inertial>
+        <mass value="${inertials['frame_right_arm_ee']['mass']}"/>
+        <origin xyz="${inertials['frame_right_arm_ee']['origin']['xyz']}" rpy="${inertials['frame_right_arm_ee']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['frame_right_arm_ee']['inertia']['ixx']}" iyy="${inertials['frame_right_arm_ee']['inertia']['iyy']}" izz="${inertials['frame_right_arm_ee']['inertia']['izz']}" ixy="${inertials['frame_right_arm_ee']['inertia']['ixy']}" ixz="${inertials['frame_right_arm_ee']['inertia']['ixz']}" iyz="${inertials['frame_right_arm_ee']['inertia']['iyz']}"/>
+      </inertial>
+    </link>
+    <link name="${prefix}frame_left_arm_ee">
+      <inertial>
+        <mass value="${inertials['frame_left_arm_ee']['mass']}"/>
+        <origin xyz="${inertials['frame_left_arm_ee']['origin']['xyz']}" rpy="${inertials['frame_left_arm_ee']['origin']['rpy']}"/>
+        <inertia ixx="${inertials['frame_left_arm_ee']['inertia']['ixx']}" iyy="${inertials['frame_left_arm_ee']['inertia']['iyy']}" izz="${inertials['frame_left_arm_ee']['inertia']['izz']}" ixy="${inertials['frame_left_arm_ee']['inertia']['ixy']}" ixz="${inertials['frame_left_arm_ee']['inertia']['ixz']}" iyz="${inertials['frame_left_arm_ee']['inertia']['iyz']}"/>
+      </inertial>
+    </link>
+    <joint name="${prefix}revolute_1" type="revolute">
+      <origin xyz="0.10000000048647181 -0.10000001000517794 0.06969999543124283" rpy="6.681936835172842e-18 0.0 -3.9410054489432796e-17"/>
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}waist_link"/>
+      <axis xyz="0.0 0.0 -1.0"/>
+      <limit lower="${joint_limits['revolute_1']['lower']}" upper="${joint_limits['revolute_1']['upper']}" effort="${joint_limits['revolute_1']['effort']}" velocity="${joint_limits['revolute_1']['velocity']}"/>
+      <dynamics damping="${joint_limits['revolute_1']['damping']}" friction="${joint_limits['revolute_1']['friction']}"/>
+    </joint>
+    <joint name="${prefix}revolute_2" type="revolute">
+      <origin xyz="0.035873007850048905 3.957528055265058e-09 0.07337301342985852" rpy="4.466069948952589e-17 1.5707963267948966 0.0"/>
+      <parent link="${prefix}waist_link"/>
+      <child link="${prefix}torso_link"/>
+      <axis xyz="0.0 0.0 -1.0"/>
+      <limit lower="${joint_limits['revolute_2']['lower']}" upper="${joint_limits['revolute_2']['upper']}" effort="${joint_limits['revolute_2']['effort']}" velocity="${joint_limits['revolute_2']['velocity']}"/>
+      <dynamics damping="${joint_limits['revolute_2']['damping']}" friction="${joint_limits['revolute_2']['friction']}"/>
+    </joint>
+    <joint name="${prefix}left_j1" type="revolute">
+      <origin xyz="-0.4169999945829581 4.198850267478349e-09 -0.1286597361510283" rpy="0.0 0.0 3.141592653589793"/>
+      <parent link="${prefix}torso_link"/>
+      <child link="${prefix}left_arm_l1"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['left_j1']['lower']}" upper="${joint_limits['left_j1']['upper']}" effort="${joint_limits['left_j1']['effort']}" velocity="${joint_limits['left_j1']['velocity']}"/>
+      <dynamics damping="${joint_limits['left_j1']['damping']}" friction="${joint_limits['left_j1']['friction']}"/>
+    </joint>
+    <joint name="${prefix}right_j1" type="revolute">
+      <origin xyz="-0.4170000006841328 3.067427409297885e-09 0.05634014642989116" rpy="3.141592653589793 0.0 0.0"/>
+      <parent link="${prefix}torso_link"/>
+      <child link="${prefix}right_arm_l1"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['right_j1']['lower']}" upper="${joint_limits['right_j1']['upper']}" effort="${joint_limits['right_j1']['effort']}" velocity="${joint_limits['right_j1']['velocity']}"/>
+      <dynamics damping="${joint_limits['right_j1']['damping']}" friction="${joint_limits['right_j1']['friction']}"/>
+    </joint>
+    <joint name="${prefix}left_j2" type="revolute">
+      <origin xyz="-1.9216519486775496e-09 0.02810000090480845 -0.05999999099743562" rpy="-1.5707963267948966 0.0 0.0"/>
+      <parent link="${prefix}left_arm_l1"/>
+      <child link="${prefix}left_arm_l2"/>
+      <axis xyz="0.0 0.0 -1.0"/>
+      <limit lower="${joint_limits['left_j2']['lower']}" upper="${joint_limits['left_j2']['upper']}" effort="${joint_limits['left_j2']['effort']}" velocity="${joint_limits['left_j2']['velocity']}"/>
+      <dynamics damping="${joint_limits['left_j2']['damping']}" friction="${joint_limits['left_j2']['friction']}"/>
+    </joint>
+    <joint name="${prefix}right_j2" type="revolute">
+      <origin xyz="9.49750600387489e-09 0.028100005704138814 -0.060000002998160856" rpy="-1.5707963267948966 0.0 0.0"/>
+      <parent link="${prefix}right_arm_l1"/>
+      <child link="${prefix}right_arm_l2"/>
+      <axis xyz="0.0 0.0 -1.0"/>
+      <limit lower="${joint_limits['right_j2']['lower']}" upper="${joint_limits['right_j2']['upper']}" effort="${joint_limits['right_j2']['effort']}" velocity="${joint_limits['right_j2']['velocity']}"/>
+      <dynamics damping="${joint_limits['right_j2']['damping']}" friction="${joint_limits['right_j2']['friction']}"/>
+    </joint>
+    <joint name="${prefix}left_j3" type="revolute">
+      <origin xyz="-0.06624999999999986 3.469446951953614e-18 -0.03010000000000001" rpy="-1.5707963267948966 0.0 1.5707963267948966"/>
+      <parent link="${prefix}left_arm_l2"/>
+      <child link="${prefix}left_arm_l3"/>
+      <axis xyz="0.0 0.0 -1.0"/>
+      <limit lower="${joint_limits['left_j3']['lower']}" upper="${joint_limits['left_j3']['upper']}" effort="${joint_limits['left_j3']['effort']}" velocity="${joint_limits['left_j3']['velocity']}"/>
+      <dynamics damping="${joint_limits['left_j3']['damping']}" friction="${joint_limits['left_j3']['friction']}"/>
+    </joint>
+    <joint name="${prefix}right_j3" type="revolute">
+      <origin xyz="0.06624999999999998 -5.551115123125783e-17 -0.02997085999999998" rpy="1.5707963267948968 0.0 -1.5707963267948963"/>
+      <parent link="${prefix}right_arm_l2"/>
+      <child link="${prefix}right_arm_l3"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['right_j3']['lower']}" upper="${joint_limits['right_j3']['upper']}" effort="${joint_limits['right_j3']['effort']}" velocity="${joint_limits['right_j3']['velocity']}"/>
+      <dynamics damping="${joint_limits['right_j3']['damping']}" friction="${joint_limits['right_j3']['friction']}"/>
+    </joint>
+    <joint name="${prefix}left_j4" type="revolute">
+      <origin xyz="-0.0315499886536615 -9.682259716203845e-10 0.15375000056700783" rpy="1.5707963254876458 -0.6108652414764664 -1.570796324010744"/>
+      <parent link="${prefix}left_arm_l3"/>
+      <child link="${prefix}left_arm_l4"/>
+      <axis xyz="0.0 0.0 -1.0"/>
+      <limit lower="${joint_limits['left_j4']['lower']}" upper="${joint_limits['left_j4']['upper']}" effort="${joint_limits['left_j4']['effort']}" velocity="${joint_limits['left_j4']['velocity']}"/>
+      <dynamics damping="${joint_limits['left_j4']['damping']}" friction="${joint_limits['left_j4']['friction']}"/>
+    </joint>
+    <joint name="${prefix}right_j4" type="revolute">
+      <origin xyz="-0.03154999694715077 -8.048461036525012e-09 -0.1537499999783694" rpy="1.5707963254876458 0.6108652414764664 1.570796324010744"/>
+      <parent link="${prefix}right_arm_l3"/>
+      <child link="${prefix}right_arm_l4"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['right_j4']['lower']}" upper="${joint_limits['right_j4']['upper']}" effort="${joint_limits['right_j4']['effort']}" velocity="${joint_limits['right_j4']['velocity']}"/>
+      <dynamics damping="${joint_limits['right_j4']['damping']}" friction="${joint_limits['right_j4']['friction']}"/>
+    </joint>
+    <joint name="${prefix}left_j5" type="revolute">
+      <origin xyz="0.008323372224485343 0.0951365864585746 -0.031499992122010476" rpy="1.4835298669950785 -1.5707963246577243 0.0"/>
+      <parent link="${prefix}left_arm_l4"/>
+      <child link="${prefix}left_arm_l5"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['left_j5']['lower']}" upper="${joint_limits['left_j5']['upper']}" effort="${joint_limits['left_j5']['effort']}" velocity="${joint_limits['left_j5']['velocity']}"/>
+      <dynamics damping="${joint_limits['left_j5']['damping']}" friction="${joint_limits['left_j5']['friction']}"/>
+    </joint>
+    <joint name="${prefix}right_j5" type="revolute">
+      <origin xyz="0.00832336639284259 -0.09513659054251043 0.03149999914436136" rpy="-1.6580627865947148 1.5707963246577243 0.0"/>
+      <parent link="${prefix}right_arm_l4"/>
+      <child link="${prefix}right_arm_l5"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['right_j5']['lower']}" upper="${joint_limits['right_j5']['upper']}" effort="${joint_limits['right_j5']['effort']}" velocity="${joint_limits['right_j5']['velocity']}"/>
+      <dynamics damping="${joint_limits['right_j5']['damping']}" friction="${joint_limits['right_j5']['friction']}"/>
+    </joint>
+    <joint name="${prefix}left_j6" type="revolute">
+      <origin xyz="-3.4254315182946637e-09 -0.037799994521300284 -0.12050000369848363" rpy="1.5707963267948966 -1.5707963267948963 0.0"/>
+      <parent link="${prefix}left_arm_l5"/>
+      <child link="${prefix}left_arm_l6"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['left_j6']['lower']}" upper="${joint_limits['left_j6']['upper']}" effort="${joint_limits['left_j6']['effort']}" velocity="${joint_limits['left_j6']['velocity']}"/>
+      <dynamics damping="${joint_limits['left_j6']['damping']}" friction="${joint_limits['left_j6']['friction']}"/>
+    </joint>
+    <joint name="${prefix}right_j6" type="revolute">
+      <origin xyz="-4.794995511758771e-10 0.03329998929287081 -0.12050000186689971" rpy="1.5707963267948966 -1.5707963267948963 0.0"/>
+      <parent link="${prefix}right_arm_l5"/>
+      <child link="${prefix}right_arm_l6"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['right_j6']['lower']}" upper="${joint_limits['right_j6']['upper']}" effort="${joint_limits['right_j6']['effort']}" velocity="${joint_limits['right_j6']['velocity']}"/>
+      <dynamics damping="${joint_limits['right_j6']['damping']}" friction="${joint_limits['right_j6']['friction']}"/>
+    </joint>
+    <joint name="${prefix}left_j7" type="revolute">
+      <origin xyz="-3.173526040914365e-09 0.02049999742553667 -0.037499998334348195" rpy="1.5707963267948966 -1.5707963267948963 0.0"/>
+      <parent link="${prefix}left_arm_l6"/>
+      <child link="${prefix}left_arm_l7"/>
+      <axis xyz="0.0 0.0 -1.0"/>
+      <limit lower="${joint_limits['left_j7']['lower']}" upper="${joint_limits['left_j7']['upper']}" effort="${joint_limits['left_j7']['effort']}" velocity="${joint_limits['left_j7']['velocity']}"/>
+      <dynamics damping="${joint_limits['left_j7']['damping']}" friction="${joint_limits['left_j7']['friction']}"/>
+    </joint>
+    <joint name="${prefix}right_j7" type="revolute">
+      <origin xyz="4.945995470823084e-10 -0.02049999890445936 0.03309383443422553" rpy="-1.5707963267948966 1.5707963267948966 0.0"/>
+      <parent link="${prefix}right_arm_l6"/>
+      <child link="${prefix}right_arm_l7"/>
+      <axis xyz="0.0 0.0 1.0"/>
+      <limit lower="${joint_limits['right_j7']['lower']}" upper="${joint_limits['right_j7']['upper']}" effort="${joint_limits['right_j7']['effort']}" velocity="${joint_limits['right_j7']['velocity']}"/>
+      <dynamics damping="${joint_limits['right_j7']['damping']}" friction="${joint_limits['right_j7']['friction']}"/>
+    </joint>
+    <joint name="${prefix}fixed_frame_left_arm_ee" type="fixed">
+      <origin xyz="1.3382437380471401e-09 0.19699999279480662 0.020500000576409685" rpy="-1.5707963267948966 0.0 0.0"/>
+      <parent link="${prefix}left_arm_l7"/>
+      <child link="${prefix}frame_left_arm_ee"/>
+    </joint>
+    <joint name="${prefix}fixed_frame_right_arm_ee" type="fixed">
+      <origin xyz="1.6515449008380756e-09 0.19699999791722272 0.020499993617884793" rpy="1.5707963267948966 0.0 3.141592653589793"/>
+      <parent link="${prefix}right_arm_l7"/>
+      <child link="${prefix}frame_right_arm_ee"/>
+    </joint>
+  </xacro:macro>
+</robot>
