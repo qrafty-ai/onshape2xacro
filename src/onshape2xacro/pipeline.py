@@ -117,6 +117,7 @@ def run_export(
         export_configuration.merge_cli_overrides(
             name=config.name,
             output=config.output,
+            format=config.format,
             visual_mesh_format=config.visual_mesh_format,
         )
 

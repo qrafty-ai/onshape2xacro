@@ -50,6 +50,8 @@ class ExportConfig:
     """Maximum subassembly traversal depth."""
     visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None
     """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
+    format: Literal["xacro", "xacro_module"] = "xacro"
+    """Output format. 'xacro' for monolithic (default), 'xacro_module' for modular per-subassembly output. Future: mjcf, sdf."""
     collision_option: CollisionConfig = field(default_factory=CollisionConfig)
     """Configuration for collision mesh generation."""
     debug: bool = False

@@ -25,6 +25,7 @@ class CollisionOptions:
 @dataclass
 class ExportOptions:
     name: str = "robot"
+    format: Literal["xacro", "xacro_module"] = "xacro"
     visual_mesh_format: Literal["glb", "dae", "obj", "stl"] = "obj"
     collision_option: CollisionOptions = field(default_factory=CollisionOptions)
     output: Path = field(default_factory=lambda: Path("output"))
@@ -92,6 +93,7 @@ class ExportConfiguration:
         self,
         name: str | None = None,
         output: Path | None = None,
+        format: Literal["xacro", "xacro_module"] | None = None,
         visual_mesh_format: Literal["glb", "dae", "obj", "stl"] | None = None,
         collision_method: Literal["fast", "coacd"] | None = None,
         bom: Path | None = None,
@@ -100,6 +102,8 @@ class ExportConfiguration:
             self.export.name = name
         if output:
             self.export.output = output
+        if format:
+            self.export.format = format
         if visual_mesh_format:
             self.export.visual_mesh_format = visual_mesh_format
         if collision_method:
