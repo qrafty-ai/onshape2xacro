@@ -52,6 +52,8 @@ class ExportConfig:
     """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
     collision_option: CollisionConfig = field(default_factory=CollisionConfig)
     """Configuration for collision mesh generation."""
+    skip_confirmation: bool = False
+    """Skip configuration confirmation prompt."""
     debug: bool = False
     """Enable debug mode with full tracebacks."""
 

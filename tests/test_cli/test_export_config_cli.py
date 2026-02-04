@@ -29,7 +29,7 @@ def test_export_auto_loads_configuration_yaml(monkeypatch, tmp_path):
     mock_run_export = MagicMock()
     monkeypatch.setattr(pipeline, "run_export", mock_run_export)
 
-    test_args = ["onshape2xacro", "export", str(local_dir)]
+    test_args = ["onshape2xacro", "export", str(local_dir), "--skip-confirmation"]
     monkeypatch.setattr(sys, "argv", test_args)
 
     main()
@@ -89,6 +89,7 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
         "override_output",
         "--visual-mesh-formats",
         "glb",
+        "--skip-confirmation",
     ]
     monkeypatch.setattr(sys, "argv", test_args)
 

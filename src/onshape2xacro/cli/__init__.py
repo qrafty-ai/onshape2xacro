@@ -33,6 +33,72 @@ def parse_args() -> Union[ExportConfig, VisualizeConfig, FetchCadConfig, AuthCon
     )
 
 
+def _confirm_export_config(cli_config: ExportConfig, export_config):
+    """Ask user to confirm export configuration using rich."""
+    if cli_config.skip_confirmation:
+        return
+
+    try:
+        from rich.console import Console
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.prompt import Confirm
+    except ImportError:
+        # Fallback if rich is missing (though it should be installed)
+        print("Export Configuration:")
+        print(f"  Input: {cli_config.path}")
+        print(f"  Output: {export_config.export.output}")
+        print(f"  Name: {export_config.export.name}")
+        response = input("Proceed with export? [y/N] ")
+        if response.lower() not in ("y", "yes"):
+            print("Export cancelled.")
+            sys.exit(0)
+        return
+
+    console = Console()
+    table = Table(title=None, show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="cyan")
+    table.add_column("Value", style="magenta")
+
+    table.add_row("Input Path", str(cli_config.path))
+    table.add_row("Output Path", str(export_config.export.output))
+    table.add_row("Robot Name", export_config.export.name)
+
+    # Handle optional visual mesh formats
+    formats = export_config.export.visual_mesh_formats
+    if formats:
+        table.add_row("Visual Mesh Formats", ", ".join(formats))
+    else:
+        table.add_row("Visual Mesh Formats", "obj (default)")
+
+    col_method = export_config.export.collision_option.method
+    table.add_row("Collision Method", col_method)
+
+    if col_method == "coacd":
+        coacd = export_config.export.collision_option.coacd
+        table.add_row("  Threshold", str(coacd.threshold))
+        table.add_row("  Resolution", str(coacd.resolution))
+        table.add_row("  Max Convex Hull", str(coacd.max_convex_hull))
+        # Add other useful coacd options if needed
+
+    if export_config.export.bom:
+        table.add_row("BOM Path", str(export_config.export.bom))
+    else:
+        table.add_row("BOM Path", "[yellow]None (mass will be default)[/yellow]")
+
+    table.add_row("Max Depth", str(cli_config.max_depth))
+
+    console.print(
+        Panel(
+            table, title="[bold green]Configuration Review[/bold green]", expand=False
+        )
+    )
+
+    if not Confirm.ask("Proceed with export?"):
+        console.print("[red]Export cancelled.[/red]")
+        sys.exit(0)
+
+
 def main():
     """Main entry point for the CLI."""
     try:
@@ -132,6 +198,8 @@ def main():
                     )
 
             from onshape2xacro.pipeline import run_export
+
+            _confirm_export_config(config, export_config)
 
             run_export(config, export_configuration=export_config)
         elif isinstance(config, VisualizeConfig):
