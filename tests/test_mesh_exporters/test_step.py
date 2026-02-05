@@ -2,6 +2,7 @@ import numpy as np
 from unittest.mock import MagicMock, patch, ANY
 from pathlib import Path
 import sys
+from onshape2xacro.config.export_config import VisualMeshOptions
 
 
 def test_step_export_visual_formats(tmp_path):
@@ -109,7 +110,9 @@ def test_step_export_visual_formats(tmp_path):
             ):
                 mock_concat.return_value = mock_mesh
                 exporter.export_link_meshes(
-                    link_records, mesh_dir, visual_mesh_formats=["dae"]
+                    link_records,
+                    mesh_dir,
+                    visual_option=VisualMeshOptions(formats=["dae"]),
                 )
 
                 # Verify color was applied
@@ -147,6 +150,8 @@ def test_step_export_visual_formats(tmp_path):
             ):
                 mock_concat.return_value = mock_mesh
                 exporter.export_link_meshes(
-                    link_records, mesh_dir, visual_mesh_formats=["obj"]
+                    link_records,
+                    mesh_dir,
+                    visual_option=VisualMeshOptions(formats=["obj"]),
                 )
             mock_mesh.export.assert_called_with(ANY, file_type="obj")

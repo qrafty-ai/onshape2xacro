@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch, ANY
 from pathlib import Path
 import numpy as np
 from onshape2xacro.mesh_exporters.step import StepMeshExporter, _collect_shapes
+from onshape2xacro.config.export_config import VisualMeshOptions
 
 
 def test_dae_pymeshlab_fallback(tmp_path):
@@ -89,7 +90,7 @@ def test_dae_pymeshlab_fallback(tmp_path):
 
             # RUN
             exporter.export_link_meshes(
-                link_records, mesh_dir, visual_mesh_formats=["dae"]
+                link_records, mesh_dir, visual_option=VisualMeshOptions(formats=["dae"])
             )
 
             # VERIFY fallback

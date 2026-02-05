@@ -24,6 +24,7 @@ from onshape2xacro.auth import (
     has_stored_credentials,
 )
 from onshape2xacro.naming import sanitize_name
+from onshape2xacro.ui import ExportUI, NullExportUI
 
 
 # Monkeypatch Occurrence.tf to handle Onshape's column-major transformation arrays.
@@ -96,9 +97,14 @@ def _generate_default_mate_values(cad: CAD) -> Dict[str, Any]:
 
 
 def run_export(
-    config: ExportConfig, export_configuration: ExportConfiguration | None = None
+    config: ExportConfig,
+    export_configuration: ExportConfiguration | None = None,
+    ui: ExportUI | None = None,
 ):
     """Run the complete export pipeline."""
+    if ui is None:
+        ui = NullExportUI()
+
     local_dir = config.path
     bom_path = config.bom
 
@@ -117,12 +123,12 @@ def run_export(
         export_configuration.merge_cli_overrides(
             name=config.name,
             output=config.output,
-            visual_mesh_formats=config.visual_mesh_formats,
         )
 
     import pickle
 
-    print(f"Loading pre-fetched CAD data from {local_dir}...")
+    # Phase 1: Load CAD data
+    ui.phase_start("load", str(local_dir))
     with open(local_dir / "cad.pickle", "rb") as f:
         cad = pickle.load(f)
 
@@ -137,43 +143,41 @@ def run_export(
         asset_path = None
         client = _try_get_client()
         if client:
-            print(
-                "Warning: 'assembly.step' not found in local directory. Will attempt to download using API."
+            from loguru import logger
+
+            logger.warning(
+                "'assembly.step' not found in local directory. Will attempt to download using API."
             )
         else:
-            print(
-                "Warning: 'assembly.step' not found in local directory and no API credentials found."
+            from loguru import logger
+
+            logger.warning(
+                "'assembly.step' not found in local directory and no API credentials found."
             )
 
     if bom_path is None and (local_dir / "bom.csv").exists():
         bom_path = local_dir / "bom.csv"
 
     mate_values = export_configuration.mate_values
+    ui.phase_done("load")
 
-    # 3. Build Kinematic Graph
-    print("Building kinematic graph...")
+    # Phase 2: Build Kinematic Graph
+    ui.phase_start("graph")
     graph = KinematicGraph.from_cad(cad)
+    ui.phase_done("graph")
 
-    # 4. Create Robot Model
-    print("Creating robot model...")
+    # Phase 3: Create Robot Model
+    ui.phase_start("model")
     robot_name = export_configuration.export.name
-    # Fallback to directory name if configured name is invalid/empty/placeholder
 
     if not robot_name or sanitize_name(robot_name) == "_":
-        logger_func = print
-        try:
-            from loguru import logger
-
-            logger_func = logger.warning
-        except ImportError:
-            pass
+        from loguru import logger
 
         old_name = robot_name
         robot_name = local_dir.name
-        logger_func(
+        logger.warning(
             f"Robot name '{old_name}' is invalid/empty. Using directory name '{robot_name}' instead."
         )
-        # Update configuration so it persists
         export_configuration.export.name = robot_name
 
     robot = CondensedRobot.from_graph(
@@ -182,24 +186,24 @@ def run_export(
         name=robot_name,
         mate_values=mate_values,
         link_name_overrides=export_configuration.link_names,
-        # Pass fail_fast parameter derived from debug configuration
         fail_fast=getattr(config, "debug", False),
     )
-    # Set client and cad for serializer's mesh export
-
     robot.client = client
     robot.cad = cad
     robot.asset_path = asset_path
+    ui.phase_done("model")
 
-    # 5. Load Config Overrides
-    print("Loading configuration overrides...")
+    # Phase 4: Load Config Overrides
+    ui.phase_start("config")
     override = ConfigOverride.load(config.config)
+    ui.phase_done("config")
 
-    # 6. Serialize and Save
+    # Phase 5: Export Meshes + Phase 6: Serialize
+    # (mesh phase is started/done inside XacroSerializer.save via ui)
     output_path = export_configuration.export.output
-    visual_mesh_formats = export_configuration.export.visual_mesh_formats
+    visual_option = export_configuration.export.visual_option
 
-    print(f"Serializing to {output_path}...")
+    ui.phase_start("serialize", str(output_path))
     serializer = XacroSerializer()
     serializer.save(
         robot,
@@ -207,10 +211,11 @@ def run_export(
         download_assets=True,
         config=override,
         bom_path=bom_path,
-        visual_mesh_formats=visual_mesh_formats,
+        visual_option=visual_option,
         collision_option=export_configuration.export.collision_option,
+        ui=ui,
     )
-    print("Export complete!")
+    ui.phase_done("serialize")
 
 
 def run_visualize(config: VisualizeConfig):

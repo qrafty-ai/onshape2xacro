@@ -4,6 +4,7 @@ from onshape2xacro.config.export_config import (
     ExportConfiguration,
     ExportOptions,
     CoACDOptions,
+    VisualMeshOptions,
 )
 
 
@@ -20,7 +21,9 @@ def test_cli_overrides(tmp_path):
     # Create a config file with specific settings
     config = ExportConfiguration(
         export=ExportOptions(
-            name="file_robot", visual_mesh_formats=["stl"], output=Path("file_output")
+            name="file_robot",
+            visual_option=VisualMeshOptions(formats=["stl"]),
+            output=Path("file_output"),
         )
     )
     config.save(config_path)
@@ -34,7 +37,7 @@ def test_cli_overrides(tmp_path):
                 "onshape2xacro",
                 "export",
                 str(input_dir),
-                "--visual-mesh-formats",
+                "--visual-option.formats",
                 "glb",
                 "--skip-confirmation",
             ],
@@ -47,7 +50,7 @@ def test_cli_overrides(tmp_path):
         export_config = kwargs["export_configuration"]
 
         # Verify CLI override: should be glb (from CLI) not stl (from file)
-        assert export_config.export.visual_mesh_formats == ["glb"]
+        assert export_config.export.visual_option.formats == ["glb"]
 
         # Verify file preservation: name should still be file_robot
         assert export_config.export.name == "file_robot"

@@ -33,6 +33,16 @@ class CollisionConfig:
 
 
 @dataclass
+class VisualMeshConfig:
+    """Configuration for visual mesh generation."""
+
+    formats: list[Literal["glb", "dae", "obj", "stl"]] | None = None
+    """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
+    max_size_mb: float | None = None
+    """Maximum file size (MB) per visual mesh. Meshes exceeding this are decimated. Defaults to 10."""
+
+
+@dataclass
 class ExportConfig:
     """Export an Onshape assembly to xacro."""
 
@@ -48,8 +58,8 @@ class ExportConfig:
     """Path to BOM CSV file for density lookup."""
     max_depth: int = 5
     """Maximum subassembly traversal depth."""
-    visual_mesh_formats: list[Literal["glb", "dae", "obj", "stl"]] | None = None
-    """Format for visual meshes (glb, dae, obj, stl). Defaults to obj."""
+    visual_option: VisualMeshConfig = field(default_factory=VisualMeshConfig)
+    """Configuration for visual mesh generation."""
     collision_option: CollisionConfig = field(default_factory=CollisionConfig)
     """Configuration for collision mesh generation."""
     skip_confirmation: bool = False

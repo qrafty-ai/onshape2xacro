@@ -13,6 +13,7 @@ from onshape2xacro.config.export_config import (
     ExportOptions,
     CollisionOptions,
     CoACDOptions,
+    VisualMeshOptions,
 )
 
 
@@ -31,7 +32,7 @@ def test_confirm_export_config_yes(capsys):
         export=ExportOptions(
             name="test_robot",
             output=Path("out"),
-            visual_mesh_formats=["obj", "glb"],
+            visual_option=VisualMeshOptions(formats=["obj", "glb"]),
             collision_option=CollisionOptions(
                 method="coacd", coacd=CoACDOptions(threshold=0.1)
             ),

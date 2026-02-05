@@ -5,7 +5,8 @@ from onshape2xacro.config.export_config import ExportConfiguration
 def test_default_config():
     config = ExportConfiguration()
     assert config.export.name == "robot"
-    assert config.export.visual_mesh_formats == ["obj"]
+    assert config.export.visual_option.formats == ["obj"]
+    assert config.export.visual_option.max_size_mb == 10.0
     assert config.export.collision_option.method == "fast"
     assert config.export.output == Path("output")
     assert config.mate_values == {}
@@ -41,7 +42,7 @@ def test_merge_cli_overrides():
     )
     assert config.export.name == "overridden"
     assert config.export.output == Path("new_output")
-    assert config.export.visual_mesh_formats == ["stl"]
+    assert config.export.visual_option.formats == ["stl"]
 
 
 def test_partial_merge():
@@ -49,4 +50,4 @@ def test_partial_merge():
     config.merge_cli_overrides(name="only_name")
     assert config.export.name == "only_name"
     assert config.export.output == Path("output")
-    assert config.export.visual_mesh_formats == ["obj"]
+    assert config.export.visual_option.formats == ["obj"]

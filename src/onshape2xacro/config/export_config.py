@@ -23,9 +23,15 @@ class CollisionOptions:
 
 
 @dataclass
+class VisualMeshOptions:
+    formats: list[str] = field(default_factory=lambda: ["obj"])
+    max_size_mb: float = 10.0
+
+
+@dataclass
 class ExportOptions:
     name: str = "robot"
-    visual_mesh_formats: list[str] = field(default_factory=lambda: ["obj"])
+    visual_option: VisualMeshOptions = field(default_factory=VisualMeshOptions)
     collision_option: CollisionOptions = field(default_factory=CollisionOptions)
     output: Path = field(default_factory=lambda: Path("output"))
     bom: Path | None = None
@@ -46,9 +52,25 @@ class ExportConfiguration:
             data = yaml.safe_load(f) or {}
 
         export_data = data.get("export", {})
+
+        # Migration: old visual_mesh_format (singular) -> visual_option.formats
         if "visual_mesh_format" in export_data:
-            # Migration: convert single format to list
-            export_data["visual_mesh_formats"] = [export_data.pop("visual_mesh_format")]
+            fmt = export_data.pop("visual_mesh_format")
+            visual_data = export_data.setdefault("visual_option", {})
+            visual_data.setdefault("formats", [fmt])
+
+        # Migration: old visual_mesh_formats (flat list) -> visual_option.formats
+        if "visual_mesh_formats" in export_data:
+            fmts = export_data.pop("visual_mesh_formats")
+            visual_data = export_data.setdefault("visual_option", {})
+            visual_data.setdefault("formats", fmts)
+
+        # Parse visual_option tree
+        visual_data = export_data.get("visual_option", {})
+        if isinstance(visual_data, dict):
+            valid_keys = VisualMeshOptions.__annotations__.keys()
+            visual_data = {k: v for k, v in visual_data.items() if k in valid_keys}
+            export_data["visual_option"] = VisualMeshOptions(**visual_data)
 
         if "output" in export_data:
             export_data["output"] = Path(export_data["output"])
@@ -105,7 +127,7 @@ class ExportConfiguration:
         if output:
             self.export.output = output
         if visual_mesh_formats:
-            self.export.visual_mesh_formats = visual_mesh_formats
+            self.export.visual_option.formats = visual_mesh_formats
         if collision_method:
             self.export.collision_option.method = collision_method
         if bom:
