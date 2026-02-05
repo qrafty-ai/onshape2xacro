@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from onshape2xacro.config.export_config import CoACDOptions
+from onshape2xacro.config.export_config import CoACDOptions, VisualMeshOptions
 
 
 def test_process_coacd_task(tmp_path):
@@ -20,7 +20,12 @@ def test_process_coacd_task(tmp_path):
     with (
         patch("onshape2xacro.mesh_exporters.step.trimesh") as mock_trimesh,
         patch("onshape2xacro.mesh_exporters.step.coacd") as mock_coacd,
+        patch("onshape2xacro.mesh_exporters.step.suppress_c_stdout") as mock_suppress,
     ):
+        # Make suppress_c_stdout a no-op context manager
+        mock_suppress.return_value.__enter__ = MagicMock(return_value=None)
+        mock_suppress.return_value.__exit__ = MagicMock(return_value=False)
+
         # Setup mocks
         mock_mesh = MagicMock()
         mock_mesh.vertices = [1, 2, 3]
@@ -86,6 +91,7 @@ def test_process_coacd_task_fallback(tmp_path):
 def test_step_export_with_concurrent_coacd(tmp_path):
     from onshape2xacro.mesh_exporters.step import StepMeshExporter
     from onshape2xacro.config.export_config import CollisionOptions
+    from concurrent.futures import Future
 
     # Mock pymeshlab module in sys.modules
     mock_pymeshlab = MagicMock()
@@ -126,6 +132,9 @@ def test_step_export_with_concurrent_coacd(tmp_path):
             patch(
                 "onshape2xacro.mesh_exporters.step.ProcessPoolExecutor"
             ) as mock_executor,
+            patch(
+                "onshape2xacro.mesh_exporters.step.as_completed"
+            ) as mock_as_completed,
             patch("onshape2xacro.mesh_exporters.step.IFSelect_RetDone", new=1),
             patch("onshape2xacro.mesh_exporters.step.BRepBuilderAPI_Transform"),
             patch("onshape2xacro.mesh_exporters.step.gp_Trsf"),
@@ -142,7 +151,6 @@ def test_step_export_with_concurrent_coacd(tmp_path):
             def side_effect_collect(
                 shape_tool, color_tool, label, loc, shapes, locations, colors, path=None
             ):
-                # Use "k1" to match one of the parts
                 shapes["k1"] = [MagicMock()]
                 locations["k1"] = [MagicMock()]
                 colors["k1"] = [None]
@@ -158,21 +166,23 @@ def test_step_export_with_concurrent_coacd(tmp_path):
 
             mock_writer.return_value.Write.side_effect = side_effect_write
 
-            # Mock BRepMesh_IncrementalMesh to avoid segfaults/errors if called
-
-            # and Ensure temp_stl creation logic passes
-
-            # Run export
-
             mock_executor_instance = mock_executor.return_value
             mock_executor_instance.__enter__.return_value = mock_executor_instance
 
-            # map should return an iterator of results
-            # Result format: (link_name, [collision_files])
-            mock_executor_instance.map.return_value = [
-                ("link1", ["collision/link1_0.stl", "collision/link1_1.stl"]),
-                ("link2", ["collision/link2_0.stl"]),
-            ]
+            # Create mock futures for submit() + as_completed() pattern
+            future1 = MagicMock(spec=Future)
+            future1.result.return_value = (
+                "link1",
+                ["collision/link1_0.stl", "collision/link1_1.stl"],
+            )
+            future2 = MagicMock(spec=Future)
+            future2.result.return_value = ("link2", ["collision/link2_0.stl"])
+
+            # submit() returns futures
+            mock_executor_instance.submit.side_effect = [future1, future2]
+
+            # as_completed yields futures
+            mock_as_completed.return_value = iter([future1, future2])
 
             # Setup dummy STEP file
             exporter.asset_path = tmp_path / "assembly.step"
@@ -191,28 +201,21 @@ def test_step_export_with_concurrent_coacd(tmp_path):
             cad.instances = {}
             cad.occurrences = {}
 
-            # Run export
-
             collision_opts = CollisionOptions(method="coacd")
             mesh_map, _, _ = exporter.export_link_meshes(
                 link_records,
                 mesh_dir,
                 collision_option=collision_opts,
-                visual_mesh_formats=["stl"],
+                visual_option=VisualMeshOptions(formats=["stl"]),
             )
 
             # Verify executor usage
             mock_executor.assert_called_with(
                 max_workers=collision_opts.coacd.max_workers
             )
-            assert mock_executor_instance.map.called
+            assert mock_executor_instance.submit.called
 
             # Verify results updated
-            # mesh_map returns Dict[str, str | Dict[str, str | List[str] | Dict[str, str]]]
-            # For coacd, we expect collision to be a list of files
-            # But wait, type checker says it expects SupportsIndex or slice?
-            # It seems the type inference for mesh_map is confusing due to complex return type.
-            # But at runtime it should work if it's a dict.
             assert mesh_map["link1"]["collision"] == [
                 "collision/link1_0.stl",
                 "collision/link1_1.stl",

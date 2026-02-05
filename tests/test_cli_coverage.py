@@ -1,9 +1,9 @@
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 from onshape2xacro.config.export_config import (
     ExportConfiguration,
     ExportOptions,
     CoACDOptions,
+    VisualMeshOptions,
 )
 
 
@@ -20,7 +20,9 @@ def test_cli_overrides(tmp_path):
     # Create a config file with specific settings
     config = ExportConfiguration(
         export=ExportOptions(
-            name="file_robot", visual_mesh_formats=["stl"], output=Path("file_output")
+            name="file_robot",
+            visual_option=VisualMeshOptions(formats=["stl"]),
+            output=tmp_path / "file_output",
         )
     )
     config.save(config_path)
@@ -34,7 +36,7 @@ def test_cli_overrides(tmp_path):
                 "onshape2xacro",
                 "export",
                 str(input_dir),
-                "--visual-mesh-formats",
+                "--visual-option.formats",
                 "glb",
                 "--skip-confirmation",
             ],
@@ -47,7 +49,7 @@ def test_cli_overrides(tmp_path):
         export_config = kwargs["export_configuration"]
 
         # Verify CLI override: should be glb (from CLI) not stl (from file)
-        assert export_config.export.visual_mesh_formats == ["glb"]
+        assert export_config.export.visual_option.formats == ["glb"]
 
         # Verify file preservation: name should still be file_robot
         assert export_config.export.name == "file_robot"
@@ -79,6 +81,7 @@ def test_cli_bom_autodetect(tmp_path):
     ):
         mock_config_obj = MagicMock()
         mock_config_obj.export.bom = None
+        mock_config_obj.export.output = tmp_path / "output"
         mock_load.return_value = mock_config_obj
 
         main()
@@ -109,9 +112,10 @@ def test_cli_coacd_override(tmp_path):
     # Create a config file with max_workers = 5
     config = ExportConfiguration(
         export=ExportOptions(
+            output=tmp_path / "output",
             collision_option=CollisionOptions(
                 method="coacd", coacd=CoACDOptions(max_workers=5, threshold=0.1)
-            )
+            ),
         )
     )
     config.save(config_path)

@@ -181,4 +181,4 @@ def test_xacro_plumbs_collision_options(tmp_path):
         assert kwargs["collision_option"] == collision_option
         assert kwargs["collision_option"].coacd.threshold == 0.123
         # Check default format is passed
-        assert kwargs["visual_mesh_formats"] == ["obj"]
+        assert kwargs["visual_option"].formats == ["obj"]

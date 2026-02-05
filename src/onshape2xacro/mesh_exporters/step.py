@@ -28,8 +28,9 @@ from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from loguru import logger
 import trimesh
 import coacd
-from concurrent.futures import ProcessPoolExecutor
-from onshape2xacro.config.export_config import CollisionOptions
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from onshape2xacro.config.export_config import CollisionOptions, VisualMeshOptions
+from onshape2xacro.ui import ExportUI, NullExportUI, suppress_c_stdout
 
 
 EXPORT_ID_REGEX = re.compile(
@@ -385,13 +386,14 @@ def _process_coacd_task(args: Tuple[str, Path, Any, Path]) -> Tuple[str, List[st
     try:
         mesh = trimesh.load(str(stl_path), force="mesh")
         coacd_mesh = coacd.Mesh(mesh.vertices, mesh.faces)
-        parts = coacd.run_coacd(
-            coacd_mesh,
-            threshold=options.threshold,
-            max_convex_hull=options.max_convex_hull,
-            resolution=options.resolution,
-            seed=options.seed,
-        )
+        with suppress_c_stdout():
+            parts = coacd.run_coacd(
+                coacd_mesh,
+                threshold=options.threshold,
+                max_convex_hull=options.max_convex_hull,
+                resolution=options.resolution,
+                seed=options.seed,
+            )
 
         if parts:
             for i, (verts, faces) in enumerate(parts):
@@ -414,6 +416,64 @@ def _process_coacd_task(args: Tuple[str, Path, Any, Path]) -> Tuple[str, List[st
             pass
 
     return link_name, collision_filenames
+
+
+def _compress_visual_mesh(
+    mesh: Any,
+    vis_path: Path,
+    fmt: str,
+    max_size_bytes: int,
+    link_name: str,
+    max_iterations: int = 10,
+) -> None:
+    current_faces = len(mesh.faces)
+    for iteration in range(max_iterations):
+        ratio = 0.5 ** (iteration + 1)
+        target_faces = max(int(current_faces * ratio), 100)
+
+        try:
+            import pymeshlab
+
+            ms = pymeshlab.MeshSet()
+            temp_stl = vis_path.parent / f"{link_name}_compress_tmp.stl"
+            mesh.export(str(temp_stl), file_type="stl")
+            ms.load_new_mesh(str(temp_stl))
+            ms.meshing_decimation_quadric_edge_collapse(targetfacenum=target_faces)
+
+            if fmt == "dae":
+                temp_obj = vis_path.parent / f"{link_name}_compress_tmp.obj"
+                ms.save_current_mesh(str(temp_obj))
+                ms2 = pymeshlab.MeshSet()
+                ms2.load_new_mesh(str(temp_obj))
+                ms2.save_current_mesh(str(vis_path))
+                temp_obj.unlink(missing_ok=True)
+            elif fmt == "obj":
+                ms.save_current_mesh(str(vis_path))
+            else:
+                decimated = trimesh.Trimesh(
+                    vertices=ms.current_mesh().vertex_matrix(),
+                    faces=ms.current_mesh().face_matrix(),
+                )
+                decimated.export(vis_path)
+
+            temp_stl.unlink(missing_ok=True)
+        except Exception:
+            decimated = mesh.simplify_quadric_decimation(target_faces)
+            decimated.export(vis_path, file_type=fmt if fmt != "dae" else "obj")
+
+        new_size = vis_path.stat().st_size
+        if new_size <= max_size_bytes:
+            logger.info(
+                f"Compressed {vis_path.name} to {new_size / 1024 / 1024:.1f} MB "
+                f"({target_faces} faces)"
+            )
+            return
+
+    logger.warning(
+        f"Failed to compress {vis_path.name} below "
+        f"{max_size_bytes / 1024 / 1024:.1f} MB after {max_iterations} iterations. "
+        f"Final size: {vis_path.stat().st_size / 1024 / 1024:.1f} MB"
+    )
 
 
 class StepMeshExporter:
@@ -553,8 +613,9 @@ class StepMeshExporter:
         link_records: Dict[str, Any],
         mesh_dir: Path,
         bom_path: Optional[Path] = None,
-        visual_mesh_formats: List[str] = ["obj"],
+        visual_option: Optional[VisualMeshOptions] = None,
         collision_option: Optional[CollisionOptions] = None,
+        ui: Optional[ExportUI] = None,
     ) -> Tuple[
         Dict[str, str | Dict[str, str | List[str] | Dict[str, str]]],
         Dict[str, List[Dict[str, str]]],
@@ -578,8 +639,18 @@ class StepMeshExporter:
         (mesh_dir / "visual").mkdir(parents=True, exist_ok=True)
         (mesh_dir / "collision").mkdir(parents=True, exist_ok=True)
 
+        if visual_option is None:
+            visual_option = VisualMeshOptions()
+        visual_mesh_formats = visual_option.formats
+        max_size_bytes = int(visual_option.max_size_mb * 1024 * 1024)
+
         if collision_option is None:
             collision_option = CollisionOptions(method="fast")
+
+        if ui is None:
+            ui = NullExportUI()
+
+        # Per-link stats accumulated for summary
 
         report = None
         calc = None
@@ -721,10 +792,16 @@ class StepMeshExporter:
 
         coacd_tasks = []
 
+        # Count links that have valid keys for progress tracking
+        processable_links = [(ln, lk) for ln, lk in link_records.items() if lk.keys]
+        ui.mesh_progress_start("Meshes", len(processable_links))
+
         for link_name, link in link_records.items():
             keys = link.keys
             if not keys:
                 continue
+
+            ui.mesh_progress_advance("Meshes", link_name)
 
             # Use CAD-derived transforms (same as ZIP path) for consistency with joint origins.
             # The STEP shapes are in local part coordinates, so we use CAD API transforms
@@ -970,7 +1047,7 @@ class StepMeshExporter:
                                     ms.load_new_mesh(str(temp_obj))
                                     ms.save_current_mesh(str(vis_path))
                                 except Exception as e:
-                                    print(
+                                    logger.debug(
                                         f"PyMeshLab DAE conversion failed for {link_name}: {e}. Falling back to trimesh."
                                     )
                                     combined_mesh.export(vis_path, file_type="dae")
@@ -981,6 +1058,22 @@ class StepMeshExporter:
                                 combined_mesh.export(vis_path, file_type="obj")
                             else:
                                 combined_mesh.export(vis_path)
+
+                    if max_size_bytes > 0 and combined_mesh is not None:
+                        for fmt, vis_filename in visual_files.items():
+                            vis_path = mesh_dir / vis_filename
+                            if not vis_path.exists():
+                                continue
+                            file_size = vis_path.stat().st_size
+                            if file_size <= max_size_bytes:
+                                continue
+                            logger.info(
+                                f"Visual mesh {vis_filename} is {file_size / 1024 / 1024:.1f} MB, "
+                                f"compressing to {visual_option.max_size_mb:.1f} MB..."
+                            )
+                            _compress_visual_mesh(
+                                combined_mesh, vis_path, fmt, max_size_bytes, link_name
+                            )
 
                     try:
                         collision_filenames = []
@@ -1009,7 +1102,7 @@ class StepMeshExporter:
 
                                 ms.save_current_mesh(str(col_path))
                             except Exception as e:
-                                print(
+                                logger.debug(
                                     f"Error creating fast collision mesh for {link_name}: {e}"
                                 )
                                 import shutil
@@ -1031,7 +1124,9 @@ class StepMeshExporter:
                         col_result = collision_filenames
 
                     except Exception as e:
-                        print(f"Error creating collision mesh for {link_name}: {e}")
+                        logger.warning(
+                            f"Error creating collision mesh for {link_name}: {e}"
+                        )
                         # Fallback to single convex hull (pymeshlab or trimesh)
                         col_filename = f"collision/{link_name}_0.stl"
                         col_path = mesh_dir / col_filename
@@ -1054,7 +1149,7 @@ class StepMeshExporter:
                         temp_stl.unlink()
 
                 except Exception as e:
-                    print(f"Error processing mesh for {link_name}: {e}")
+                    logger.warning(f"Error processing mesh for {link_name}: {e}")
                     # Fallback to original STL behavior if trimesh fails
                     final_stl = mesh_dir / "visual" / f"{link_name}.stl"
                     if temp_stl.exists():
@@ -1064,23 +1159,51 @@ class StepMeshExporter:
                         "collision": f"visual/{final_stl.name}",
                     }
 
+        ui.mesh_progress_done("Meshes")
+
         if coacd_tasks:
-            logger.info(
-                f"Processing {len(coacd_tasks)} CoACD tasks with {collision_option.coacd.max_workers} workers..."
-            )
+            ui.mesh_progress_start("CoACD collisions", len(coacd_tasks))
+            coacd_fallback_count = 0
+            total_collision_stls = 0
+
             with ProcessPoolExecutor(
                 max_workers=collision_option.coacd.max_workers
             ) as executor:
-                results = executor.map(_process_coacd_task, coacd_tasks)
-                for link_name, col_filenames in results:
-                    if link_name in mesh_map:
-                        entry = mesh_map[link_name]
+                future_to_link = {
+                    executor.submit(_process_coacd_task, task): task[0]
+                    for task in coacd_tasks
+                }
+                for future in as_completed(future_to_link):
+                    link_name = future_to_link[future]
+                    try:
+                        result_link_name, col_filenames = future.result()
+                    except Exception as e:
+                        logger.error(f"CoACD worker failed for {link_name}: {e}")
+                        col_filenames = []
+                        result_link_name = link_name
+
+                    if result_link_name in mesh_map:
+                        entry = mesh_map[result_link_name]
                         if isinstance(entry, dict):
                             entry["collision"] = col_filenames
 
+                    total_collision_stls += len(col_filenames)
+                    # Detect fallback: coacd_task produces only 1 hull = likely fallback
+                    if len(col_filenames) <= 1:
+                        coacd_fallback_count += 1
+
                     # Clean up temp STL
-                    temp_stl_path = mesh_dir / f"{link_name}_raw.stl"
+                    temp_stl_path = mesh_dir / f"{result_link_name}_raw.stl"
                     if temp_stl_path.exists():
                         temp_stl_path.unlink()
+
+                    ui.mesh_progress_advance("CoACD collisions", result_link_name)
+
+            detail = f"{total_collision_stls} STLs"
+            if coacd_fallback_count:
+                detail += f", {coacd_fallback_count} fallbacks"
+            ui.mesh_progress_done("CoACD collisions", detail)
+
+        ui.finish_progress()
 
         return mesh_map, missing_meshes, report

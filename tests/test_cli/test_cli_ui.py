@@ -13,25 +13,27 @@ from onshape2xacro.config.export_config import (
     ExportOptions,
     CollisionOptions,
     CoACDOptions,
+    VisualMeshOptions,
 )
 
 
-def test_confirm_export_config_skip():
+def test_confirm_export_config_skip(tmp_path):
     cli_config = ExportConfig(path=Path("."), skip_confirmation=True)
     export_config = MagicMock()
+    export_config.export.output = tmp_path / "output"
 
     with patch("rich.console.Console") as mock_console:
         _confirm_export_config(cli_config, export_config)
         mock_console.assert_not_called()
 
 
-def test_confirm_export_config_yes(capsys):
+def test_confirm_export_config_yes(capsys, tmp_path):
     cli_config = ExportConfig(path=Path("."), skip_confirmation=False, max_depth=5)
     export_config = ExportConfiguration(
         export=ExportOptions(
             name="test_robot",
-            output=Path("out"),
-            visual_mesh_formats=["obj", "glb"],
+            output=tmp_path / "out",
+            visual_option=VisualMeshOptions(formats=["obj", "glb"]),
             collision_option=CollisionOptions(
                 method="coacd", coacd=CoACDOptions(threshold=0.1)
             ),
@@ -46,9 +48,9 @@ def test_confirm_export_config_yes(capsys):
             mock_ask.assert_called_once()
 
 
-def test_confirm_export_config_no(capsys):
+def test_confirm_export_config_no(capsys, tmp_path):
     cli_config = ExportConfig(path=Path("."), skip_confirmation=False)
-    export_config = ExportConfiguration(export=ExportOptions())
+    export_config = ExportConfiguration(export=ExportOptions(output=tmp_path / "out"))
 
     with patch("rich.prompt.Confirm.ask", return_value=False):
         with patch("rich.console.Console"):

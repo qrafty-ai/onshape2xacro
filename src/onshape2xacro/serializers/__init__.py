@@ -7,10 +7,11 @@ import yaml
 
 from onshape_robotics_toolkit.formats.base import RobotSerializer
 from onshape2xacro.config import ConfigOverride
-from onshape2xacro.config.export_config import CollisionOptions
+from onshape2xacro.config.export_config import CollisionOptions, VisualMeshOptions
 from onshape2xacro.naming import sanitize_name
 from onshape2xacro.mesh_exporters.step import StepMeshExporter
 from onshape2xacro.condensed_robot import JointRecord
+from onshape2xacro.ui import ExportStats, ExportUI, NullExportUI
 
 if TYPE_CHECKING:
     from onshape_robotics_toolkit.robot import Robot
@@ -63,8 +64,9 @@ class XacroSerializer(RobotSerializer):
         download_assets: bool = True,
         mesh_dir: Optional[str] = None,
         bom_path: Optional[Path] = None,
-        visual_mesh_formats: list[str] = ["obj"],
+        visual_option: Optional[VisualMeshOptions] = None,
         collision_option: Optional[CollisionOptions] = None,
+        ui: Optional[ExportUI] = None,
         **options: Any,
     ):
         """Save robot to hierarchical xacro structure."""
@@ -81,7 +83,10 @@ class XacroSerializer(RobotSerializer):
         for d in [urdf_dir, mesh_dir_path, config_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-        # Determine default visual extension
+        if visual_option is None:
+            visual_option = VisualMeshOptions()
+        visual_mesh_formats = visual_option.formats
+
         default_visual_mesh_ext = (
             visual_mesh_formats[0] if visual_mesh_formats else "obj"
         )
@@ -90,14 +95,19 @@ class XacroSerializer(RobotSerializer):
         mesh_map = {}
         missing_meshes = {}
         computed_inertials = {}
+        report = None
+
+        if ui is None:
+            ui = NullExportUI()
 
         if download_assets:
             mesh_map, missing_meshes, report = self._export_meshes(
                 robot,
                 mesh_dir_path,
-                visual_mesh_formats=visual_mesh_formats,
+                visual_option=visual_option,
                 bom_path=bom_path,
                 collision_option=collision_option,
+                ui=ui,
             )
 
             if report and report.link_properties:
@@ -230,6 +240,42 @@ class XacroSerializer(RobotSerializer):
             self._write_missing_meshes_prompt(
                 missing_meshes, mesh_dir_path, robot, out_dir
             )
+
+        # 7. Print summary panel
+        num_links = sum(
+            1 for _, d in robot.nodes(data=True) if d.get("link") or d.get("data")
+        )
+        num_joints = sum(
+            1
+            for p, c in robot.edges
+            if is_joint(
+                getattr(
+                    (robot.get_edge_data(p, c) or {}).get("joint")
+                    or (robot.get_edge_data(p, c) or {}).get("data"),
+                    "name",
+                    "",
+                )
+            )
+        )
+
+        stats = ExportStats(
+            robot_name=sanitize_name(robot.name),
+            output_path=str(out_dir),
+            num_links=num_links,
+            num_joints=num_joints,
+        )
+
+        if missing_meshes:
+            stats.missing_mesh_links = len(missing_meshes)
+            stats.missing_mesh_parts = sum(len(v) for v in missing_meshes.values())
+            stats.missing_meshes_path = str(out_dir / "MISSING_MESHES.md")
+
+        if report and report.link_properties:
+            stats.total_mass_kg = sum(p.mass for p in report.link_properties.values())
+            if report.link_parts:
+                stats.inertia_debug_path = str(out_dir / "inertia_debug.md")
+
+        ui.print_summary(stats)
 
     def _group_by_subassembly(self, robot: "Robot") -> Dict[Any, Dict[str, List]]:
         groups = {}
@@ -574,15 +620,15 @@ class XacroSerializer(RobotSerializer):
         self,
         robot: "Robot",
         mesh_dir: Path,
-        visual_mesh_formats: list[str] = ["obj"],
+        visual_option: Optional[VisualMeshOptions] = None,
         bom_path: Optional[Path] = None,
         collision_option: Optional[CollisionOptions] = None,
+        ui: Optional[ExportUI] = None,
     ) -> tuple[
         dict[str, Any],
         dict[str, list[dict[str, str]]],
         Optional["InertiaReport"],
     ]:
-        """Export meshes for robot links."""
         link_records: Dict[str, Any] = {}
         for _, data in robot.nodes(data=True):
             link = data.get("link") or data.get("data")
@@ -596,13 +642,13 @@ class XacroSerializer(RobotSerializer):
 
         if (client and cad) or (cad and asset_path):
             exporter = StepMeshExporter(client, cad, asset_path=asset_path)
-            # Pass link records instead of just keys
             mesh_map, missing_meshes, report = exporter.export_link_meshes(
                 link_records,
                 mesh_dir,
                 bom_path=bom_path,
-                visual_mesh_formats=visual_mesh_formats,
+                visual_option=visual_option,
                 collision_option=collision_option,
+                ui=ui,
             )
             return mesh_map, missing_meshes, report
 

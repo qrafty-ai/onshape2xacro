@@ -19,7 +19,7 @@ def test_export_auto_loads_configuration_yaml(monkeypatch, tmp_path):
     config_data = {
         "export": {
             "name": "yaml_robot",
-            "output": "yaml_output",
+            "output": str(tmp_path / "yaml_output"),
             "visual_mesh_formats": ["stl"],
         }
     }
@@ -39,7 +39,7 @@ def test_export_auto_loads_configuration_yaml(monkeypatch, tmp_path):
 
     assert config.name == "yaml_robot"
     assert Path(config.output).name == "yaml_output"
-    assert config.visual_mesh_formats == ["stl"]
+    assert config.visual_option.formats == ["stl"]
 
 
 def test_export_fails_missing_configuration_yaml(monkeypatch, tmp_path):
@@ -69,7 +69,7 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
     config_data = {
         "export": {
             "name": "yaml_robot",
-            "output": "yaml_output",
+            "output": str(tmp_path / "yaml_output"),
             "visual_mesh_formats": ["stl"],
         }
     }
@@ -86,8 +86,8 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
         "--name",
         "override_name",
         "--output",
-        "override_output",
-        "--visual-mesh-formats",
+        str(tmp_path / "override_output"),
+        "--visual-option.formats",
         "glb",
         "--skip-confirmation",
     ]
@@ -100,4 +100,4 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
 
     assert config.name == "override_name"
     assert Path(config.output).name == "override_output"
-    assert config.visual_mesh_formats == ["glb"]
+    assert config.visual_option.formats == ["glb"]

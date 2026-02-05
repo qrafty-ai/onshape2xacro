@@ -1,4 +1,5 @@
 import importlib.metadata
+import logging
 import sys
 from typing import Union
 import tyro
@@ -64,12 +65,14 @@ def _confirm_export_config(cli_config: ExportConfig, export_config):
     table.add_row("Output Path", str(export_config.export.output))
     table.add_row("Robot Name", export_config.export.name)
 
-    # Handle optional visual mesh formats
-    formats = export_config.export.visual_mesh_formats
+    formats = export_config.export.visual_option.formats
     if formats:
         table.add_row("Visual Mesh Formats", ", ".join(formats))
     else:
         table.add_row("Visual Mesh Formats", "obj (default)")
+
+    max_size = export_config.export.visual_option.max_size_mb
+    table.add_row("Visual Max Size (MB)", str(max_size))
 
     col_method = export_config.export.collision_option.method
     table.add_row("Collision Method", col_method)
@@ -79,7 +82,6 @@ def _confirm_export_config(cli_config: ExportConfig, export_config):
         table.add_row("  Threshold", str(coacd.threshold))
         table.add_row("  Resolution", str(coacd.resolution))
         table.add_row("  Max Convex Hull", str(coacd.max_convex_hull))
-        # Add other useful coacd options if needed
 
     if export_config.export.bom:
         table.add_row("BOM Path", str(export_config.export.bom))
@@ -97,6 +99,57 @@ def _confirm_export_config(cli_config: ExportConfig, export_config):
     if not Confirm.ask("Proceed with export?"):
         console.print("[red]Export cancelled.[/red]")
         sys.exit(0)
+
+
+def _setup_logging(output_path=None, verbose=False, debug=False):
+    """Centralize logging: file sink at DEBUG, console at WARNING+ (INFO+ with --verbose).
+
+    Removes the default loguru stderr sink and replaces it with controlled sinks.
+    Also configures stdlib logging to forward into loguru for a unified log file.
+    """
+    from loguru import logger
+
+    # Remove the default loguru sink (id=0 is the stderr sink added at import)
+    logger.remove()
+
+    # Console sink: only WARNING+ by default, INFO+ with --verbose
+    console_level = "DEBUG" if debug else ("INFO" if verbose else "WARNING")
+    logger.add(
+        sys.stderr,
+        level=console_level,
+        format="<level>{level.icon} {message}</level>",
+        colorize=True,
+    )
+
+    # File sink: always at DEBUG level if we have an output path
+    if output_path is not None:
+        from pathlib import Path
+
+        log_file = Path(output_path) / "export.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        logger.add(
+            str(log_file),
+            level="DEBUG",
+            format="{time:HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} | {message}",
+            rotation=None,
+        )
+
+    # Forward stdlib logging into loguru so all library logs go to the file
+    class _InterceptHandler(logging.Handler):
+        def emit(self, record):
+            try:
+                level = logger.level(record.levelname).name
+            except ValueError:
+                level = record.levelno
+            frame, depth = logging.currentframe(), 2
+            while frame and frame.f_code.co_filename == logging.__file__:
+                frame = frame.f_back
+                depth += 1
+            logger.opt(depth=depth, exception=record.exc_info).log(
+                level, record.getMessage()
+            )
+
+    logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
 
 
 def main():
@@ -117,7 +170,11 @@ def main():
                 raise RuntimeError(f"configuration.yaml not found in {config.path}")
 
             from onshape2xacro.config.export_config import ExportConfiguration
-            from onshape2xacro.schema import CoACDConfig, CollisionConfig
+            from onshape2xacro.schema import (
+                CoACDConfig,
+                CollisionConfig,
+                VisualMeshConfig,
+            )
 
             export_config = ExportConfiguration.load(config_path)
 
@@ -125,29 +182,23 @@ def main():
 
             CollisionConfig()
             CoACDConfig()
+            VisualMeshConfig()
 
-            # Generalized CLI override application
             from dataclasses import fields
 
-            # Override ExportOptions (name, output, visual_mesh_formats, bom, etc.)
             for field in fields(ExportConfig):
                 field_name = field.name
-                if field_name == "path":  # path is not in ExportOptions
-                    continue
-                if field_name == "collision_option":  # handled separately
+                if field_name in ("path", "collision_option", "visual_option"):
                     continue
 
-                # Check if this field exists in export_config.export
                 if not hasattr(export_config.export, field_name):
                     continue
 
                 cli_val = getattr(config, field_name)
 
-                # If CLI provided a value (not None), override config
                 if cli_val is not None:
                     setattr(export_config.export, field_name, cli_val)
                 else:
-                    # Otherwise, update config object with value from file so pipeline sees effective config
                     setattr(
                         config, field_name, getattr(export_config.export, field_name)
                     )
@@ -169,7 +220,19 @@ def main():
                         "Please specify BOM file explicitly."
                     )
 
-            # Override collision method
+            for field in fields(VisualMeshConfig):
+                field_name = field.name
+                cli_val = getattr(config.visual_option, field_name)
+
+                if cli_val is not None:
+                    setattr(export_config.export.visual_option, field_name, cli_val)
+                else:
+                    setattr(
+                        config.visual_option,
+                        field_name,
+                        getattr(export_config.export.visual_option, field_name),
+                    )
+
             if config.collision_option.method is not None:
                 export_config.export.collision_option.method = (
                     config.collision_option.method
@@ -198,10 +261,20 @@ def main():
                     )
 
             from onshape2xacro.pipeline import run_export
+            from onshape2xacro.ui import RichExportUI
 
             _confirm_export_config(config, export_config)
 
-            run_export(config, export_configuration=export_config)
+            # Set up logging and UI
+            output_path = export_config.export.output
+            _setup_logging(
+                output_path=output_path,
+                verbose=getattr(config, "verbose", False),
+                debug=getattr(config, "debug", False),
+            )
+            ui = RichExportUI()
+
+            run_export(config, export_configuration=export_config, ui=ui)
         elif isinstance(config, VisualizeConfig):
             from onshape2xacro.pipeline import run_visualize
 

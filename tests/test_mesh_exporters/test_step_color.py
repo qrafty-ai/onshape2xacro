@@ -8,6 +8,7 @@ from onshape2xacro.mesh_exporters.step import (
     _collect_shapes,
     StepMeshExporter,
 )
+from onshape2xacro.config.export_config import VisualMeshOptions
 
 
 @pytest.fixture
@@ -305,7 +306,7 @@ def test_export_link_meshes_color_integration(tmp_path):
 
             # RUN
             exporter.export_link_meshes(
-                link_records, mesh_dir, visual_mesh_formats=["obj"]
+                link_records, mesh_dir, visual_option=VisualMeshOptions(formats=["obj"])
             )
 
             # VERIFY
