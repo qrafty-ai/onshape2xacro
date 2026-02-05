@@ -1,6 +1,7 @@
 """Compute mass properties from STEP geometry using CadQuery."""
 
 from pathlib import Path
+import re
 from typing import Dict, Optional, Tuple, TYPE_CHECKING
 import logging
 
@@ -395,7 +396,6 @@ class InertiaCalculator:
 
             # Use part_name as the primary identifier (it contains the actual part name)
             # Extract the leaf name from the full path (e.g., "sub-asm-base_1_square_base_plate_1" -> "square_base_plate")
-            import re
 
             part_id = None
             if part_name_full:
@@ -425,7 +425,13 @@ class InertiaCalculator:
             part_bom_match_name = None
 
             def normalize_name(name: str) -> str:
-                return name.lower().replace(" ", "_").replace(".", "")
+                s = name.lower()
+                s = s.replace("&", "_")
+                s = s.replace(".", "")
+                s = re.sub(r"[^a-z0-9]", "_", s)
+                s = re.sub(r"_+", "_", s)
+                s = s.strip("_")
+                return s
 
             part_bom_entry = bom_entries.get(part_id)
             if part_bom_entry:
