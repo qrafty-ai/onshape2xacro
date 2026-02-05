@@ -19,7 +19,7 @@ def test_export_auto_loads_configuration_yaml(monkeypatch, tmp_path):
     config_data = {
         "export": {
             "name": "yaml_robot",
-            "output": "yaml_output",
+            "output": str(tmp_path / "yaml_output"),
             "visual_mesh_formats": ["stl"],
         }
     }
@@ -69,7 +69,7 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
     config_data = {
         "export": {
             "name": "yaml_robot",
-            "output": "yaml_output",
+            "output": str(tmp_path / "yaml_output"),
             "visual_mesh_formats": ["stl"],
         }
     }
@@ -86,7 +86,7 @@ def test_export_cli_overrides_yaml(monkeypatch, tmp_path):
         "--name",
         "override_name",
         "--output",
-        "override_output",
+        str(tmp_path / "override_output"),
         "--visual-option.formats",
         "glb",
         "--skip-confirmation",

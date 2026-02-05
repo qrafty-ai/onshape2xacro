@@ -95,6 +95,7 @@ class XacroSerializer(RobotSerializer):
         mesh_map = {}
         missing_meshes = {}
         computed_inertials = {}
+        report = None
 
         if ui is None:
             ui = NullExportUI()

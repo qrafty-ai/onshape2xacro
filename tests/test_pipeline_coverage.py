@@ -13,7 +13,9 @@ def test_pipeline_name_fallback(tmp_path):
 
     # Config with empty name
     config_path = input_dir / "configuration.yaml"
-    config = ExportConfiguration(export=ExportOptions(name=""))
+    config = ExportConfiguration(
+        export=ExportOptions(name="", output=tmp_path / "output")
+    )
     config.save(config_path)
 
     cli_config = ExportConfig(path=input_dir)
@@ -50,7 +52,9 @@ def test_pipeline_name_sanitize_fallback(tmp_path):
     # but let's test a case that WOULD sanitize to empty string if we didn't have the directory fallback
     # e.g. purely special chars
     config_path = input_dir / "configuration.yaml"
-    config = ExportConfiguration(export=ExportOptions(name="!!!"))
+    config = ExportConfiguration(
+        export=ExportOptions(name="!!!", output=tmp_path / "output")
+    )
     config.save(config_path)
 
     cli_config = ExportConfig(path=input_dir)

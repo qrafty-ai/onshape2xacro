@@ -1,4 +1,3 @@
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 from onshape2xacro.config.export_config import (
     ExportConfiguration,
@@ -23,7 +22,7 @@ def test_cli_overrides(tmp_path):
         export=ExportOptions(
             name="file_robot",
             visual_option=VisualMeshOptions(formats=["stl"]),
-            output=Path("file_output"),
+            output=tmp_path / "file_output",
         )
     )
     config.save(config_path)
@@ -82,6 +81,7 @@ def test_cli_bom_autodetect(tmp_path):
     ):
         mock_config_obj = MagicMock()
         mock_config_obj.export.bom = None
+        mock_config_obj.export.output = tmp_path / "output"
         mock_load.return_value = mock_config_obj
 
         main()
@@ -112,9 +112,10 @@ def test_cli_coacd_override(tmp_path):
     # Create a config file with max_workers = 5
     config = ExportConfiguration(
         export=ExportOptions(
+            output=tmp_path / "output",
             collision_option=CollisionOptions(
                 method="coacd", coacd=CoACDOptions(max_workers=5, threshold=0.1)
-            )
+            ),
         )
     )
     config.save(config_path)
