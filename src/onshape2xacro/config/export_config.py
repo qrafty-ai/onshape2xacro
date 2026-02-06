@@ -17,9 +17,15 @@ class CoACDOptions:
 
 
 @dataclass
+class SphereOptions:
+    target: int = 8
+
+
+@dataclass
 class CollisionOptions:
-    method: Literal["fast", "coacd"] = "fast"
+    methods: list[str] = field(default_factory=lambda: ["fast"])
     coacd: CoACDOptions = field(default_factory=CoACDOptions)
+    sphere: SphereOptions = field(default_factory=SphereOptions)
 
 
 @dataclass
@@ -88,10 +94,22 @@ class ExportConfiguration:
             coacd_data = {k: v for k, v in coacd_data.items() if k in valid_keys}
             collision_data["coacd"] = CoACDOptions(**coacd_data)
 
+        if "sphere" in collision_data:
+            sphere_data = collision_data["sphere"]
+            if isinstance(sphere_data, dict):
+                valid_keys = SphereOptions.__annotations__.keys()
+                sphere_data = {k: v for k, v in sphere_data.items() if k in valid_keys}
+                collision_data["sphere"] = SphereOptions(**sphere_data)
+
+        # Migration: old method (singular) -> methods (list)
+        if "method" in collision_data:
+            method = collision_data.pop("method")
+            collision_data.setdefault("methods", [method])
+
         # Support old collision_mesh_method if present
         if "collision_mesh_method" in export_data:
-            if "method" not in collision_data:
-                collision_data["method"] = export_data.pop("collision_mesh_method")
+            if "methods" not in collision_data:
+                collision_data["methods"] = [export_data.pop("collision_mesh_method")]
             else:
                 export_data.pop("collision_mesh_method")
 
@@ -119,7 +137,7 @@ class ExportConfiguration:
         name: str | None = None,
         output: Path | None = None,
         visual_mesh_formats: list[str] | None = None,
-        collision_method: Literal["fast", "coacd"] | None = None,
+        collision_method: Literal["fast", "coacd", "sphere"] | None = None,
         bom: Path | None = None,
     ) -> None:
         if name:
@@ -129,6 +147,6 @@ class ExportConfiguration:
         if visual_mesh_formats:
             self.export.visual_option.formats = visual_mesh_formats
         if collision_method:
-            self.export.collision_option.method = collision_method
+            self.export.collision_option.methods = [collision_method]
         if bom:
             self.export.bom = bom
