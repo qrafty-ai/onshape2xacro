@@ -74,14 +74,20 @@ def _confirm_export_config(cli_config: ExportConfig, export_config):
     max_size = export_config.export.visual_option.max_size_mb
     table.add_row("Visual Max Size (MB)", str(max_size))
 
-    col_method = export_config.export.collision_option.method
-    table.add_row("Collision Method", col_method)
+    col_methods = export_config.export.collision_option.methods
+    table.add_row(
+        "Collision Methods", ", ".join(col_methods) if col_methods else "fast"
+    )
 
-    if col_method == "coacd":
+    if col_methods and "coacd" in col_methods:
         coacd = export_config.export.collision_option.coacd
-        table.add_row("  Threshold", str(coacd.threshold))
-        table.add_row("  Resolution", str(coacd.resolution))
-        table.add_row("  Max Convex Hull", str(coacd.max_convex_hull))
+        table.add_row("  CoACD Threshold", str(coacd.threshold))
+        table.add_row("  CoACD Resolution", str(coacd.resolution))
+        table.add_row("  CoACD Max Hull", str(coacd.max_convex_hull))
+
+    if col_methods and "sphere" in col_methods:
+        sphere = export_config.export.collision_option.sphere
+        table.add_row("  Sphere Target", str(sphere.target))
 
     if export_config.export.bom:
         table.add_row("BOM Path", str(export_config.export.bom))
@@ -173,6 +179,7 @@ def main():
             from onshape2xacro.schema import (
                 CoACDConfig,
                 CollisionConfig,
+                SphereConfig,
                 VisualMeshConfig,
             )
 
@@ -182,6 +189,7 @@ def main():
 
             CollisionConfig()
             CoACDConfig()
+            SphereConfig()
             VisualMeshConfig()
 
             from dataclasses import fields
@@ -233,13 +241,13 @@ def main():
                         getattr(export_config.export.visual_option, field_name),
                     )
 
-            if config.collision_option.method is not None:
-                export_config.export.collision_option.method = (
-                    config.collision_option.method
+            if config.collision_option.methods is not None:
+                export_config.export.collision_option.methods = (
+                    config.collision_option.methods
                 )
             else:
-                config.collision_option.method = (
-                    export_config.export.collision_option.method
+                config.collision_option.methods = (
+                    export_config.export.collision_option.methods
                 )
 
             # Override CoACD options
@@ -257,6 +265,26 @@ def main():
                         field_name,
                         getattr(
                             export_config.export.collision_option.coacd, field_name
+                        ),
+                    )
+
+            # Override Sphere options
+            for field in fields(SphereConfig):
+                field_name = field.name
+                cli_val = getattr(config.collision_option.sphere, field_name)
+
+                if cli_val is not None:
+                    setattr(
+                        export_config.export.collision_option.sphere,
+                        field_name,
+                        cli_val,
+                    )
+                else:
+                    setattr(
+                        config.collision_option.sphere,
+                        field_name,
+                        getattr(
+                            export_config.export.collision_option.sphere, field_name
                         ),
                     )
 

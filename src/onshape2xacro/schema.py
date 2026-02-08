@@ -23,13 +23,23 @@ class CoACDConfig:
 
 
 @dataclass
+class SphereConfig:
+    """Configuration for sphere collision approximation."""
+
+    target: int | None = None
+    """Target number of spheres."""
+
+
+@dataclass
 class CollisionConfig:
     """Configuration for collision mesh generation."""
 
-    method: Literal["fast", "coacd"] | None = None
-    """Method for collision mesh generation (fast, coacd). Defaults to fast."""
+    methods: list[Literal["fast", "coacd", "sphere"]] | None = None
+    """Method for collision mesh generation (fast, coacd, sphere). Defaults to fast."""
     coacd: CoACDConfig = field(default_factory=CoACDConfig)
     """CoACD specific configuration."""
+    sphere: SphereConfig = field(default_factory=SphereConfig)
+    """Sphere specific configuration."""
 
 
 @dataclass

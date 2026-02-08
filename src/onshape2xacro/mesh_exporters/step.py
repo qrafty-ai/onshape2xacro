@@ -645,7 +645,7 @@ class StepMeshExporter:
         max_size_bytes = int(visual_option.max_size_mb * 1024 * 1024)
 
         if collision_option is None:
-            collision_option = CollisionOptions(method="fast")
+            collision_option = CollisionOptions(methods=["fast"])
 
         if ui is None:
             ui = NullExportUI()
@@ -1075,77 +1075,155 @@ class StepMeshExporter:
                                 combined_mesh, vis_path, fmt, max_size_bytes, link_name
                             )
 
-                    try:
-                        collision_filenames = []
-                        if collision_option.method == "coacd":
-                            coacd_tasks.append(
-                                (link_name, temp_stl, collision_option.coacd, mesh_dir)
-                            )
-                            col_result = []  # Placeholder
-                        elif collision_option.method == "fast":
-                            col_filename = f"collision/{link_name}_0.stl"
-                            col_path = mesh_dir / col_filename
+                        # Collision Meshes
+                        collision_results = {}
+
+                        # Ensure methods is a list (config migration should handle this, but be safe)
+                        methods = getattr(collision_option, "methods", ["fast"])
+                        if isinstance(methods, str):
+                            methods = [methods]
+
+                        for method in methods:
                             try:
-                                import pymeshlab
-
-                                ms = pymeshlab.MeshSet()
-                                ms.load_new_mesh(str(temp_stl))
-
-                                # Generate Convex Hull
-                                ms.generate_convex_hull()
-
-                                # Simplify if needed (target 200 faces)
-                                if ms.current_mesh().face_number() > 2000:
-                                    ms.meshing_decimation_quadric_edge_collapse(
-                                        targetfacenum=2000,
+                                if method == "coacd":
+                                    coacd_tasks.append(
+                                        (
+                                            link_name,
+                                            temp_stl,
+                                            collision_option.coacd,
+                                            mesh_dir,
+                                        )
                                     )
+                                    # Placeholder, will be populated by executor
+                                    collision_results["coacd"] = []
 
-                                ms.save_current_mesh(str(col_path))
+                                elif method == "fast":
+                                    col_filename = f"collision/{link_name}_fast.stl"
+                                    col_path = mesh_dir / col_filename
+                                    try:
+                                        import pymeshlab
+
+                                        ms = pymeshlab.MeshSet()
+                                        ms.load_new_mesh(str(temp_stl))
+                                        ms.generate_convex_hull()
+
+                                        if ms.current_mesh().face_number() > 2000:
+                                            ms.meshing_decimation_quadric_edge_collapse(
+                                                targetfacenum=2000,
+                                            )
+                                        ms.save_current_mesh(str(col_path))
+                                    except Exception as e:
+                                        logger.debug(
+                                            f"Error creating fast collision for {link_name}: {e}"
+                                        )
+                                        import shutil
+
+                                        shutil.copy(temp_stl, col_path)
+
+                                    collision_results["fast"] = [col_filename]
+
+                                elif method == "sphere":
+                                    # Sphere approximation using ballpark
+                                    try:
+                                        import ballpark
+
+                                        # Use combined_mesh if available (has colors etc, but geometry is what matters)
+
+                                        # Or temp_stl. Trimesh load is safer.
+                                        mesh_for_sphere = trimesh.load(
+                                            str(temp_stl), force="mesh"
+                                        )
+
+                                        spheres = ballpark.spherize(
+                                            mesh_for_sphere,
+                                            target_spheres=collision_option.sphere.target,
+                                        )
+
+                                        # Write xacro file
+                                        sphere_xacro_dir = (
+                                            mesh_dir.parent / "urdf" / "spheres"
+                                        )
+                                        sphere_xacro_dir.mkdir(
+                                            parents=True, exist_ok=True
+                                        )
+                                        sphere_filename = f"spheres/{link_name}.xacro"
+                                        sphere_path = (
+                                            mesh_dir.parent / "urdf" / sphere_filename
+                                        )
+
+                                        # We need to write a xacro that contains collision blocks
+                                        # Format:
+                                        # <robot xmlns:xacro="...">
+                                        #   <collision>
+                                        #     <origin .../>
+                                        #     <geometry><sphere radius="..."/></geometry>
+                                        #   </collision>
+                                        #   ...
+                                        # </robot>
+
+                                        sphere_content = [
+                                            '<?xml version="1.0"?>',
+                                            '<robot xmlns:xacro="http://www.ros.org/wiki/xacro">',
+                                        ]
+                                        sphere_content.append(
+                                            f'  <xacro:macro name="{link_name}_spheres">'
+                                        )
+
+                                        for s in spheres:
+                                            # ballpark spheres use JAX arrays, convert to float
+                                            # Scale from mm (STEP/STL) to meters (URDF)
+                                            center = np.array(s.center) * 0.001
+                                            radius = float(s.radius) * 0.001
+                                            xyz = f"{center[0]:.6f} {center[1]:.6f} {center[2]:.6f}"
+
+                                            sphere_content.append("  <collision>")
+                                            sphere_content.append(
+                                                f'    <origin xyz="{xyz}" rpy="0 0 0"/>'
+                                            )
+                                            sphere_content.append("    <geometry>")
+                                            sphere_content.append(
+                                                f'      <sphere radius="{radius:.6f}"/>'
+                                            )
+                                            sphere_content.append("    </geometry>")
+                                            sphere_content.append("  </collision>")
+
+                                        sphere_content.append("  </xacro:macro>")
+                                        sphere_content.append("</robot>")
+
+                                        with open(sphere_path, "w") as f:
+                                            f.write("\n".join(sphere_content))
+
+                                        collision_results["sphere"] = sphere_filename
+
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"Error creating sphere collision for {link_name}: {e}"
+                                        )
+                                        # No fallback for sphere, just omit
+                                        pass
+
                             except Exception as e:
-                                logger.debug(
-                                    f"Error creating fast collision mesh for {link_name}: {e}"
+                                logger.warning(
+                                    f"Error in collision method {method} for {link_name}: {e}"
                                 )
-                                import shutil
 
-                                shutil.copy(temp_stl, col_path)
-                            collision_filenames.append(col_filename)
-
-                        if (
-                            not collision_filenames
-                            and collision_option.method != "coacd"
-                        ):
-                            col_filename = f"collision/{link_name}_0.stl"
+                        # Fallback if no methods succeeded (and not waiting for coacd)
+                        if not collision_results and not coacd_tasks:
+                            col_filename = f"collision/{link_name}_fallback.stl"
                             col_path = mesh_dir / col_filename
                             import shutil
 
                             shutil.copy(temp_stl, col_path)
-                            collision_filenames.append(col_filename)
-
-                        col_result = collision_filenames
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Error creating collision mesh for {link_name}: {e}"
-                        )
-                        # Fallback to single convex hull (pymeshlab or trimesh)
-                        col_filename = f"collision/{link_name}_0.stl"
-                        col_path = mesh_dir / col_filename
-                        try:
-                            import shutil
-
-                            shutil.copy(temp_stl, col_path)
-                        except Exception:
-                            pass
-                        col_result = [col_filename]
+                            collision_results["fast"] = [col_filename]
 
                     # Store both
                     mesh_map[link_name] = {
                         "visual": visual_files,
-                        "collision": col_result,
+                        "collision": collision_results,
                     }
 
                     # Clean up temp
-                    if collision_option.method != "coacd":
+                    if "coacd" not in methods:
                         temp_stl.unlink()
 
                 except Exception as e:
@@ -1184,8 +1262,10 @@ class StepMeshExporter:
 
                     if result_link_name in mesh_map:
                         entry = mesh_map[result_link_name]
-                        if isinstance(entry, dict):
-                            entry["collision"] = col_filenames
+                        if isinstance(entry, dict) and isinstance(
+                            entry.get("collision"), dict
+                        ):
+                            entry["collision"]["coacd"] = col_filenames
 
                     total_collision_stls += len(col_filenames)
                     # Detect fallback: coacd_task produces only 1 hull = likely fallback

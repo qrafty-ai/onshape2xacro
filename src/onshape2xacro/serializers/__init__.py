@@ -87,6 +87,11 @@ class XacroSerializer(RobotSerializer):
             visual_option = VisualMeshOptions()
         visual_mesh_formats = visual_option.formats
 
+        if collision_option is None:
+            collision_option = CollisionOptions()
+        collision_methods = getattr(collision_option, "methods", ["fast"])
+        default_collision_method = collision_methods[0] if collision_methods else "fast"
+
         default_visual_mesh_ext = (
             visual_mesh_formats[0] if visual_mesh_formats else "obj"
         )
@@ -170,6 +175,7 @@ class XacroSerializer(RobotSerializer):
                 children,
                 mesh_rel_path=mesh_rel_path,
                 default_visual_mesh_ext=default_visual_mesh_ext,
+                default_collision_method=default_collision_method,
             )
 
             with open(module_path, "w") as f:
@@ -213,6 +219,14 @@ class XacroSerializer(RobotSerializer):
             default=default_visual_mesh_ext,
         )
 
+        # Argument for collision type
+        ET.SubElement(
+            entry_point_root,
+            "{http://www.ros.org/wiki/xacro}arg",
+            name="collision_type",
+            default=default_collision_method,
+        )
+
         # Include the macro file
         inc = ET.SubElement(entry_point_root, "{http://www.ros.org/wiki/xacro}include")
         inc.set("filename", f"{main_name}.xacro")
@@ -223,6 +237,7 @@ class XacroSerializer(RobotSerializer):
             f"{{http://www.ros.org/wiki/xacro}}{main_name}",
             prefix="",
             visual_mesh_ext="$(arg visual_mesh_ext)",
+            collision_type="$(arg collision_type)",
         )
 
         entry_point_content = ET.tostring(
@@ -321,10 +336,14 @@ class XacroSerializer(RobotSerializer):
         children: List,
         mesh_rel_path: str = "meshes",
         default_visual_mesh_ext: str = "obj",
+        default_collision_method: str = "fast",
     ):
         macro = ET.SubElement(root, "{http://www.ros.org/wiki/xacro}macro")
         macro.set("name", sanitize_name(name))
-        macro.set("params", f"prefix:='' visual_mesh_ext:='{default_visual_mesh_ext}'")
+        macro.set(
+            "params",
+            f"prefix:='' visual_mesh_ext:='{default_visual_mesh_ext}' collision_type:='{default_collision_method}'",
+        )
 
         for link in elements["links"]:
             if link:
@@ -349,6 +368,7 @@ class XacroSerializer(RobotSerializer):
                 "{http://www.ros.org/wiki/xacro}" + child_name,
                 prefix="${prefix}",
                 visual_mesh_ext="${visual_mesh_ext}",
+                collision_type="${collision_type}",
             )
 
     def _add_robot_macro(
@@ -495,50 +515,71 @@ class XacroSerializer(RobotSerializer):
             # LinkRecord now contains frame_transform used for baking
 
             entry = mesh_map[name]
-            # Handle both old (str) and new (dict) formats
-            collision_file = None
+
+            # 1. Visual Element
+            # We rely on the xacro parameter to select the extension
+            visual_el = ET.SubElement(link_el, "visual")
+            ET.SubElement(visual_el, "origin", xyz="0 0 0", rpy="0 0 0")
+            visual_geom = ET.SubElement(visual_el, "geometry")
+            visual_mesh = ET.SubElement(visual_geom, "mesh")
+            visual_mesh.set(
+                "filename",
+                f"{mesh_rel_path}/visual/{name}.${{visual_mesh_ext}}",
+            )
+            visual_mesh.set("scale", "0.001 0.001 0.001")
+
+            # 2. Collision Elements
+            # Handle both old (str/list) and new (dict of methods) formats
+            collision_data = None
 
             if isinstance(entry, dict):
-                visual_entry = entry.get("visual", f"{name}.stl")
-                if isinstance(visual_entry, dict):
-                    pass
-                elif isinstance(visual_entry, str):
-                    pass
-
-                collision_file = entry.get("collision", f"{name}.stl")
+                collision_data = entry.get("collision", f"{name}.stl")
             else:
-                collision_file = entry
+                collision_data = entry
 
-            for tag in ["visual", "collision"]:
-                files_to_add = []
-                if tag == "visual":
-                    # For visual, we rely on the xacro parameter to select the extension
-                    # We just add one mesh element with the dynamic filename
-                    # Note: this assumes at least one visual mesh exists if 'visual' key is present
-                    files_to_add = ["dynamic"]
+            collision_methods = {}
+            if isinstance(collision_data, dict):
+                collision_methods = collision_data
+            elif isinstance(collision_data, list):
+                collision_methods = {"fast": collision_data}
+            elif isinstance(collision_data, str):
+                collision_methods = {"fast": [collision_data]}
+
+            for method, content in collision_methods.items():
+                condition = f"${{collision_type == '{method}'}}"
+                if_block = ET.SubElement(
+                    link_el, "{http://www.ros.org/wiki/xacro}if", value=condition
+                )
+
+                if method == "sphere":
+                    # Sphere collision is a xacro file to include
+                    sphere_file = content if isinstance(content, str) else content[0]
+                    # path to spheres is relative to urdf root.
+                    # mesh_rel_path points to meshes dir.
+                    # We construct path via: mesh_rel_path/../urdf/sphere_file
+                    sphere_path = f"{mesh_rel_path}/../urdf/{sphere_file}"
+
+                    inc = ET.SubElement(
+                        if_block, "{http://www.ros.org/wiki/xacro}include"
+                    )
+                    inc.set("filename", sphere_path)
+
+                    # Call the macro defined in the included file
+                    # Macro name convention: {link_name}_spheres
+                    ET.SubElement(
+                        if_block,
+                        f"{{http://www.ros.org/wiki/xacro}}{name}_spheres",
+                    )
                 else:
-                    if isinstance(collision_file, list):
-                        files_to_add = collision_file
-                    else:
-                        files_to_add = [collision_file]
-
-                for filename in files_to_add:
-                    el = ET.SubElement(link_el, tag)
-                    # Identity origin for baked meshes
-                    ET.SubElement(el, "origin", xyz="0 0 0", rpy="0 0 0")
-                    geom = ET.SubElement(el, "geometry")
-                    mesh = ET.SubElement(geom, "mesh")
-
-                    if tag == "visual":
-                        # Use the xacro parameter for extension
-                        mesh.set(
-                            "filename",
-                            f"{mesh_rel_path}/visual/{name}.${{visual_mesh_ext}}",
-                        )
-                    else:
-                        mesh.set("filename", f"{mesh_rel_path}/{filename}")
-
-                    mesh.set("scale", "0.001 0.001 0.001")
+                    # Mesh collision
+                    files = content if isinstance(content, list) else [content]
+                    for filename in files:
+                        col_el = ET.SubElement(if_block, "collision")
+                        ET.SubElement(col_el, "origin", xyz="0 0 0", rpy="0 0 0")
+                        col_geom = ET.SubElement(col_el, "geometry")
+                        col_mesh = ET.SubElement(col_geom, "mesh")
+                        col_mesh.set("filename", f"{mesh_rel_path}/{filename}")
+                        col_mesh.set("scale", "0.001 0.001 0.001")
 
     def _joint_to_xacro(
         self,
