@@ -58,7 +58,7 @@ onshape2xacro/
 - **Sanitization**: Link/joint names sanitized via `naming.sanitize_name()` (replace `/`, `-`, `.` with `_`)
 
 ### Architecture
-- **Modular CLI**: `auth` → `fetch-cad` → `export` (allows manual `mate_values.json` editing between steps)
+- **Modular CLI**: `auth` → `fetch-cad` → `export` (allows manual `configuration.yaml` editing between steps)
 - **Local Processing**: Fetch assembly as single STEP file, process locally (vs. per-part API calls)
 - **Auto-Link Merging**: Fixed occurrences merged into single URDF links
 - **Lazy CAD Loading**: `OptimizedCAD` caches API responses to reduce calls
@@ -78,11 +78,11 @@ onshape2xacro/
 ### Forbidden
 - **NEVER use link-level mass**: Inertia calculation allows link-level material for density, but FORBIDS link-level mass (line 501 of `inertia/calculator.py`)
 - **NO STEP export without Client**: Raises `RuntimeError` if client not initialized (line 494 of `mesh_exporters/step.py`)
-- **NO skipping pose zeroing**: Robot MUST be in zero pose or have correct `mate_values.json` before export (README limitation)
+- **NO skipping pose zeroing**: Robot MUST be in zero pose or have correct `configuration.yaml` with mate values before export (README limitation)
 - **NO instantiating OCP in tests**: ALWAYS mock OCP classes (`XCAFDoc_DocumentTool`, `Quantity_Color`, etc.)
 
 ### Gotchas
-- **Recursive Mate Retrieval**: Onshape API `getMateValues` does NOT support recursive retrieval → manually specify mate values for sub-assembly joints
+- **Recursive Mate Retrieval**: Onshape API `getMateValues` does NOT support recursive retrieval → manually specify mate values in `configuration.yaml` for sub-assembly joints
 - **STL ignores color**: For color preservation, use `obj`, `dae`, or `glb` formats (not `stl`)
 - **Short name collisions**: BOM matching skips very short strings ("a", "b", "no") to avoid false positives (lines 455-460 of `inertia/calculator.py`)
 - **Only revolute mates supported**: Other mate types (slider, etc.) not yet implemented
