@@ -14,9 +14,12 @@ Existing exporters often output flat URDFs or require numerous API calls that ca
 
 This project uses `uv` for modern, fast Python package management.
 
-Use uvx directly:
+Using `uv` directly:
 
 ```bash
+# install in your local bin
+uv tool install "git+https://github.com/qrafty-ai/onshape2xacro"
+# or if you just want to test without installation
 uvx --from git+https://github.com/qrafty-ai/onshape2xacro onshape2xacro --help
 ```
 
