@@ -53,7 +53,7 @@ The export workflow is broken down into modular steps to give you full control o
     - `assembly.step`: The full 3D geometry of the robot.
     - `configuration.yaml`: A unified configuration file containing export settings, mate values, and link name mappings.
 
-    Note that due to the limitation of onshape API (see [Limitation](#limitation)) there's no stable enough way to retrieve the current mate values of the assembly automatically. Therefore, the default generated mate values in `configuration.yaml` are all 0. The preferred way is to make sure you put all mates to 0 before fetching data (you can create a [Name Position](https://cad.onshape.com/help/Content/named-positions.htm) to make this easier). If there's mate that can't be set to `0`, you can modify the `mate_values` section in `configuration.yaml` manually to the correct values.
+    Note that due to the limitation of Onshape API (see [Limitation](#limitation)) there's no stable enough way to retrieve the current mate values of the assembly automatically. Therefore, the default generated mate values in `configuration.yaml` are all 0. The preferred way is to make sure you put all mates to 0 before fetching data (you can create a [Name Position](https://cad.onshape.com/help/Content/named-positions.htm) to make this easier). If there's mate that can't be set to `0`, you can modify the `mate_values` section in `configuration.yaml` manually to the correct values.
 
 3. **Modify Configuration** (Optional):
     You can customize the export by editing `<local_dir>/configuration.yaml`. This file contains:
@@ -109,12 +109,12 @@ The export workflow is broken down into modular steps to give you full control o
 
     You can also copy the BOM file to `<local_dir>/bom.csv`, and it will be automatically detected.
 
-    BOM can be exported from onshape's assembly page, make sure to include `Name`, `Material`, and `Mass` columns into the bill and make sure their values are presented:
+    BOM can be exported from Onshape's assembly page, make sure to include `Name`, `Material`, and `Mass` columns into the bill and make sure their values are presented:
     ![BOM Example](./assets/bom_example.png)
 
     The inertia calculation assumes that the part's mass is uniformly distributed (which is true for metals but not the case for 3D-printed parts).
 
-    To debug the inertial calculation, inspect the generated `inertia_debug.md` file in the output directory and compare with [calculated values](https://cad.onshape.com/help/Content/massprops-asmb.htm?cshid=massprops_assembly) from onshape.
+    To debug the inertial calculation, inspect the generated `inertia_debug.md` file in the output directory and compare with [calculated values](https://cad.onshape.com/help/Content/massprops-asmb.htm?cshid=massprops_assembly) from Onshape.
 
 ## Limitation
 
