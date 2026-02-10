@@ -60,7 +60,7 @@ The export workflow is broken down into modular steps to give you full control o
 
 3. **Modify Configuration** (Optional):
     You can customize the export by editing `<local_dir>/configuration.yaml`. This file contains:
-    
+
     - **`mate_values`**: Joint angles and translations for each mate. Edit these if you want to export the robot in a specific pose (e.g., a "zero" configuration that differs from the CAD model).
     - **`link_names`**: Override auto-generated link names with custom names.
     - **`export`**: Export settings including:
@@ -97,7 +97,7 @@ The export workflow is broken down into modular steps to give you full control o
     ```
 
     This processes the local assets, calculates inertias based on geometry and material density, extracts visual/collision meshes, and writes the Xacro files. The command reads the `configuration.yaml` file from `<local_dir>` and uses those settings for the export.
-    
+
     You can also override specific settings from the command line:
     ```bash
     onshape2xacro export <local_dir> --output <final_xacro_dir> --name custom_robot --visual-option.formats obj stl
