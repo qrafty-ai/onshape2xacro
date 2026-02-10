@@ -51,12 +51,41 @@ The export workflow is broken down into modular steps to give you full control o
     This generates:
     - `cad.pickle`: Cached assembly metadata.
     - `assembly.step`: The full 3D geometry of the robot.
-    - `mate_values.json`: A mapping of joint IDs to their current values.
+    - `configuration.yaml`: A unified configuration file containing export settings, mate values, and link name mappings.
 
-    Note that due to the limitation of onshape API (see [Limitation](#limitation)) there's no stable enough way to retrieve the current mate values of the assembly automatically. Therefore, the default generated `mate_values.json` are all 0. The preferred way is to make sure you put all mates to 0 before fetching data (you can create a [Name Position](https://cad.onshape.com/help/Content/named-positions.htm) to make this easier). If there's mate that can' be set to `0`, you can modify `mate_values.json` manually to the correct values.
+    Note that due to the limitation of onshape API (see [Limitation](#limitation)) there's no stable enough way to retrieve the current mate values of the assembly automatically. Therefore, the default generated mate values in `configuration.yaml` are all 0. The preferred way is to make sure you put all mates to 0 before fetching data (you can create a [Name Position](https://cad.onshape.com/help/Content/named-positions.htm) to make this easier). If there's mate that can't be set to `0`, you can modify the `mate_values` section in `configuration.yaml` manually to the correct values.
 
-3. **Modify Mate Value** (Optional):
-    If you want to export the robot in a specific pose (e.g., a "zero" configuration that differs from the CAD model), edit `<local_dir>/mate_values.json` and adjust the joint angles or translations.
+3. **Modify Configuration** (Optional):
+    You can customize the export by editing `<local_dir>/configuration.yaml`. This file contains:
+    
+    - **`mate_values`**: Joint angles and translations for each mate. Edit these if you want to export the robot in a specific pose (e.g., a "zero" configuration that differs from the CAD model).
+    - **`link_names`**: Override auto-generated link names with custom names.
+    - **`export`**: Export settings including:
+      - `name`: Robot name
+      - `visual_option`: Visual mesh formats and size limits
+      - `collision_option`: Collision mesh generation method (fast or coacd)
+      - `bom`: Path to BOM CSV file
+      - `output`: Output directory path
+
+    Example `configuration.yaml`:
+    ```yaml
+    export:
+      name: my_robot
+      visual_option:
+        formats: [obj]
+        max_size_mb: 10.0
+      collision_option:
+        method: fast
+      output: output
+    mate_values:
+      mate_id_xyz:
+        featureId: mate_id_xyz
+        mateName: joint_arm
+        rotationZ: 1.57  # 90 degrees
+        translationX: 0.0
+    link_names:
+      base_link: custom_base
+    ```
 
 4. **Export**: Generate the final Xacro description.
 
@@ -64,14 +93,21 @@ The export workflow is broken down into modular steps to give you full control o
     onshape2xacro export <local_dir> --output <final_xacro_dir>
     ```
 
-    This processes the local assets, calculates inertias based on geometry and material density, extracts visual/collision meshes, and writes the Xacro files.
+    This processes the local assets, calculates inertias based on geometry and material density, extracts visual/collision meshes, and writes the Xacro files. The command reads the `configuration.yaml` file from `<local_dir>` and uses those settings for the export.
+    
+    You can also override specific settings from the command line:
+    ```bash
+    onshape2xacro export <local_dir> --output <final_xacro_dir> --name custom_robot --visual-option.formats obj stl
+    ```
 
 5. **BOM Export** (Optional):
-    For inertial calculation, you can provide a Bill of Materials (BOM) CSV to specify material densities and mass for different parts:
+    For inertial calculation, you can provide a Bill of Materials (BOM) CSV to specify material densities and mass for different parts. The BOM path can be specified either in `configuration.yaml` under `export.bom` or via command line:
 
     ```bash
     onshape2xacro export <local_dir> --output <final_xacro_dir> --bom <path_to_bom.csv>
     ```
+
+    You can also copy the BOM file to `<local_dir>/bom.csv`, and it will be automatically detected.
 
     BOM can be exported from onshape's assembly page, make sure to include `Name`, `Material`, and `Mass` columns into the bill and make sure their values are presented:
     ![BOM Example](./assets/bom_example.png)
@@ -84,7 +120,7 @@ The export workflow is broken down into modular steps to give you full control o
 
 ### Requires zeroing robot pose before export
 
-**Why is manual input required?** To correctly align the URDF joints with the exported STEP geometry, the tool requires the specific values of every mate at the time of export. However, the current Onshape API ([getMateValues](https://cad.onshape.com/glassworks/explorer/#/Assembly/getMateValues)) does not support recursive retrieval and only returns data for the root assembly. Consequently, you must manually specify the mate values for any joints located inside sub-assemblies to ensure the kinematic chain matches the link meshes.
+**Why is manual input required?** To correctly align the URDF joints with the exported STEP geometry, the tool requires the specific values of every mate at the time of export. However, the current Onshape API ([getMateValues](https://cad.onshape.com/glassworks/explorer/#/Assembly/getMateValues)) does not support recursive retrieval and only returns data for the root assembly. Consequently, you must manually specify the mate values in the `mate_values` section of `configuration.yaml` for any joints located inside sub-assemblies to ensure the kinematic chain matches the link meshes.
 
 ### Limited type of mates supported
 
