@@ -17,7 +17,7 @@ def test_save_and_load(tmp_path):
     config_path = tmp_path / "config.yaml"
     config = ExportConfiguration()
     config.export.name = "my_robot"
-    config.mate_values = {"mate1": {"rotation": 1.0}}
+    config.mate_values = {"mate1": {"rotation": 1.0, "invert_direction": True}}
     config.link_names = {"link1": "custom1"}
 
     config.save(config_path)
@@ -25,7 +25,7 @@ def test_save_and_load(tmp_path):
 
     loaded = ExportConfiguration.load(config_path)
     assert loaded.export.name == "my_robot"
-    assert loaded.mate_values == {"mate1": {"rotation": 1.0}}
+    assert loaded.mate_values == {"mate1": {"rotation": 1.0, "invert_direction": True}}
     assert loaded.link_names == {"link1": "custom1"}
     assert isinstance(loaded.export.output, Path)
 

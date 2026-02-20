@@ -61,7 +61,7 @@ The export workflow is broken down into modular steps to give you full control o
 3. **Modify Configuration** (Optional):
     You can customize the export by editing `<local_dir>/configuration.yaml`. This file contains:
 
-    - **`mate_values`**: Joint angles and translations for each mate. Edit these if you want to export the robot in a specific pose (e.g., a "zero" configuration that differs from the CAD model).
+    - **`mate_values`**: Joint angles and translations for each mate. Edit these if you want to export the robot in a specific pose (e.g., a "zero" configuration that differs from the CAD model). Set `invert_direction: true` on a mate to flip its joint direction.
     - **`link_names`**: Override auto-generated link names with custom names.
     - **`export`**: Export settings including:
       - `name`: Robot name
@@ -84,6 +84,7 @@ The export workflow is broken down into modular steps to give you full control o
       mate_id_xyz:
         featureId: mate_id_xyz
         mateName: joint_arm
+        invert_direction: false
         rotationZ: 1.57  # 90 degrees
         translationX: 0.0
     link_names:
