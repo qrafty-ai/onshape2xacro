@@ -455,6 +455,7 @@ class CondensedRobot(Robot):
 
                 # Calculate correction transform based on current mate values
                 T_mate_correction = np.eye(4)
+                invert_direction = False
 
                 # Determine correction sign based on whether the parent entity is the
                 # first or second entity in the mate definition.
@@ -463,10 +464,20 @@ class CondensedRobot(Robot):
                     values = mate_values[mate_id]
                     if values is None:
                         raise RuntimeError(f"Mate values for mate ID {mate_id} is None")
+                    invert_direction_raw = values.get("invert_direction", False)
+                    if isinstance(invert_direction_raw, str):
+                        invert_direction = invert_direction_raw.strip().lower() in {
+                            "1",
+                            "true",
+                            "yes",
+                            "on",
+                        }
+                    else:
+                        invert_direction = bool(invert_direction_raw)
                     # Onshape mates align Z axis for primary motion
                     if mate_type == "REVOLUTE":
                         # Default to -1.0 if we can't determine direction
-                        sign = -1.0
+                        physical_sign = -1.0
 
                         if mate_id in mate_id_to_orig:
                             k0, k1 = mate_id_to_orig[mate_id]
@@ -484,12 +495,16 @@ class CondensedRobot(Robot):
                             r1 = _get_root(k1)
 
                             if parent_key == r1:
-                                sign = -1.0
+                                physical_sign = -1.0
                             elif parent_key == r0:
-                                sign = 1.0
+                                physical_sign = 1.0
 
-                        axis = (0.0, 0.0, sign)
-                        angle = values.get("rotationZ", 0.0) * sign
+                        axis_sign = (
+                            -physical_sign if invert_direction else physical_sign
+                        )
+
+                        axis = (0.0, 0.0, axis_sign)
+                        angle = values.get("rotationZ", 0.0) * physical_sign
                         # print(f"Joint {mate_name} axis set to {axis}")
 
                         if abs(angle) > 1e-6:
@@ -525,6 +540,24 @@ class CondensedRobot(Robot):
                 joint_origin = Origin.from_matrix(T_origin_mat)
 
                 mate_limits = getattr(mate, "limits", None)
+                if invert_direction and mate_limits and mate_type == "REVOLUTE":
+                    if isinstance(mate_limits, dict):
+                        if "min" in mate_limits and "max" in mate_limits:
+                            mate_limits = {
+                                **mate_limits,
+                                "min": -mate_limits["max"],
+                                "max": -mate_limits["min"],
+                            }
+                    elif hasattr(mate_limits, "min") and hasattr(mate_limits, "max"):
+                        inverted_limits = {
+                            "min": -mate_limits.max,
+                            "max": -mate_limits.min,
+                        }
+                        if hasattr(mate_limits, "effort"):
+                            inverted_limits["effort"] = mate_limits.effort
+                        if hasattr(mate_limits, "velocity"):
+                            inverted_limits["velocity"] = mate_limits.velocity
+                        mate_limits = inverted_limits
 
                 joint_rec = JointRecord(
                     name=mate_name,

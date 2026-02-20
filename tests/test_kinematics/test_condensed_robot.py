@@ -298,3 +298,152 @@ def test_condensed_robot_virtual_frames():
     assert joint.joint_type == "fixed"
     assert joint.name == "fixed_frame_tcp"
     assert np.allclose(joint.origin.xyz, [0.1, 0.0, 0.0])
+
+
+def test_condensed_robot_invert_direction_flips_axis_sign():
+    graph = MagicMock()
+
+    class MockNode:
+        def __init__(self, name):
+            self.part_name = name
+            self.part_id = name
+            self.occurrence = f"occ_{name}"
+
+    node_a = MockNode("A")
+    node_b = MockNode("B")
+
+    edge = MagicMock()
+    edge.u = node_a
+    edge.v = node_b
+    edge.mate = create_mock_mate_with_entities("joint_1", node_a.occurrence)
+
+    graph.nodes = [node_a, node_b]
+    graph.edges = [edge]
+
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+    cad.mates = {}
+    cad.keys_by_id = {}
+
+    robot_default = CondensedRobot.from_graph(
+        graph,
+        cad=cad,
+        mate_values={"id_joint_1": {"rotationZ": 0.0}},
+    )
+    default_joint = list(robot_default.edges(data=True))[0][2]["joint"]
+
+    robot_inverted = CondensedRobot.from_graph(
+        graph,
+        cad=cad,
+        mate_values={"id_joint_1": {"rotationZ": 0.0, "invert_direction": True}},
+    )
+    inverted_joint = list(robot_inverted.edges(data=True))[0][2]["joint"]
+
+    assert default_joint.axis[2] == -1.0
+    assert inverted_joint.axis[2] == 1.0
+    assert inverted_joint.axis[2] == -default_joint.axis[2]
+
+
+def test_condensed_robot_invert_direction_keeps_pose_correction():
+    graph = MagicMock()
+
+    class MockNode:
+        def __init__(self, name):
+            self.part_name = name
+            self.part_id = name
+            self.occurrence = f"occ_{name}"
+
+    node_a = MockNode("A")
+    node_b = MockNode("B")
+
+    edge = MagicMock()
+    edge.u = node_a
+    edge.v = node_b
+    edge.mate = create_mock_mate_with_entities("joint_1", node_a.occurrence)
+
+    graph.nodes = [node_a, node_b]
+    graph.edges = [edge]
+
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+    cad.mates = {}
+    cad.keys_by_id = {}
+
+    robot_default = CondensedRobot.from_graph(
+        graph,
+        cad=cad,
+        mate_values={"id_joint_1": {"rotationZ": 0.5}},
+    )
+    default_joint = list(robot_default.edges(data=True))[0][2]["joint"]
+    default_child_link = next(
+        data["link"]
+        for _, data in robot_default.nodes(data=True)
+        if data["link"].name == default_joint.child
+    )
+
+    robot_inverted = CondensedRobot.from_graph(
+        graph,
+        cad=cad,
+        mate_values={"id_joint_1": {"rotationZ": 0.5, "invert_direction": True}},
+    )
+    inverted_joint = list(robot_inverted.edges(data=True))[0][2]["joint"]
+    inverted_child_link = next(
+        data["link"]
+        for _, data in robot_inverted.nodes(data=True)
+        if data["link"].name == inverted_joint.child
+    )
+
+    np.testing.assert_allclose(
+        default_child_link.frame_transform,
+        inverted_child_link.frame_transform,
+        atol=1e-7,
+    )
+    assert inverted_joint.axis[2] == -default_joint.axis[2]
+
+
+def test_condensed_robot_invert_direction_flips_joint_limits():
+    graph = MagicMock()
+
+    class MockNode:
+        def __init__(self, name):
+            self.part_name = name
+            self.part_id = name
+            self.occurrence = f"occ_{name}"
+
+    node_a = MockNode("A")
+    node_b = MockNode("B")
+
+    edge = MagicMock()
+    edge.u = node_a
+    edge.v = node_b
+    edge.mate = create_mock_mate_with_entities("joint_1", node_a.occurrence)
+    edge.mate.limits = {"min": -0.2, "max": 1.0, "effort": 5.0, "velocity": 2.0}
+
+    graph.nodes = [node_a, node_b]
+    graph.edges = [edge]
+
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+    cad.mates = {}
+    cad.keys_by_id = {}
+
+    robot_default = CondensedRobot.from_graph(
+        graph,
+        cad=cad,
+        mate_values={"id_joint_1": {"rotationZ": 0.0}},
+    )
+    default_joint = list(robot_default.edges(data=True))[0][2]["joint"]
+
+    robot_inverted = CondensedRobot.from_graph(
+        graph,
+        cad=cad,
+        mate_values={"id_joint_1": {"rotationZ": 0.0, "invert_direction": True}},
+    )
+    inverted_joint = list(robot_inverted.edges(data=True))[0][2]["joint"]
+
+    assert default_joint.limits["min"] == -0.2
+    assert default_joint.limits["max"] == 1.0
+    assert inverted_joint.limits["min"] == -1.0
+    assert inverted_joint.limits["max"] == 0.2
+    assert inverted_joint.limits["effort"] == 5.0
+    assert inverted_joint.limits["velocity"] == 2.0

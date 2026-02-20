@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 import pickle
+from types import SimpleNamespace
 
 
 # Define MockCAD at module level so it can be pickled
@@ -33,6 +34,7 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "get_credentials", lambda: ("access", "secret"))
 
     mock_cad = MockCAD()
+    mock_cad.mates = {"joint_1": SimpleNamespace(id="mate_joint_1", name="joint_1")}
 
     # Mock CAD.from_url
     # pipeline.py imports OptimizedCAD from onshape2xacro.optimized_cad
@@ -96,6 +98,7 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
         config_data = yaml.safe_load(f)
 
     assert "mate_values" in config_data
+    assert config_data["mate_values"]["mate_joint_1"]["invert_direction"] is False
     assert "link_names" in config_data
     assert config_data["link_names"] == {"link1": "link1", "link2": "link2"}
     assert config_data["export"]["name"] == "test_robot"
