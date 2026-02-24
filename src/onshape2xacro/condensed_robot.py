@@ -456,6 +456,7 @@ class CondensedRobot(Robot):
                 # Calculate correction transform based on current mate values
                 T_mate_correction = np.eye(4)
                 invert_direction = False
+                joint_offset_rad = 0.0
 
                 # Determine correction sign based on whether the parent entity is the
                 # first or second entity in the mate definition.
@@ -474,6 +475,15 @@ class CondensedRobot(Robot):
                         }
                     else:
                         invert_direction = bool(invert_direction_raw)
+
+                    joint_offset_raw = values.get("joint_offset_rad", 0.0)
+                    try:
+                        joint_offset_rad = float(joint_offset_raw)
+                    except (TypeError, ValueError):
+                        raise RuntimeError(
+                            f"Invalid joint_offset_rad for joint {mate_name}: {joint_offset_raw}"
+                        )
+
                     # Onshape mates align Z axis for primary motion
                     if mate_type == "REVOLUTE":
                         # Default to -1.0 if we can't determine direction
@@ -537,6 +547,14 @@ class CondensedRobot(Robot):
                     T_WC = np.eye(4)
                 T_origin_mat = np.linalg.inv(T_WC) @ T_WJ
 
+                if mate_type == "REVOLUTE" and abs(joint_offset_rad) > 1e-12:
+                    origin_offset = -axis[2] * joint_offset_rad
+                    c_off, s_off = np.cos(origin_offset), np.sin(origin_offset)
+                    R_offset = np.array(
+                        [[c_off, -s_off, 0], [s_off, c_off, 0], [0, 0, 1]]
+                    )
+                    T_origin_mat[:3, :3] = T_origin_mat[:3, :3] @ R_offset
+
                 joint_origin = Origin.from_matrix(T_origin_mat)
 
                 mate_limits = getattr(mate, "limits", None)
@@ -558,6 +576,29 @@ class CondensedRobot(Robot):
                         if hasattr(mate_limits, "velocity"):
                             inverted_limits["velocity"] = mate_limits.velocity
                         mate_limits = inverted_limits
+
+                if (
+                    mate_type == "REVOLUTE"
+                    and mate_limits
+                    and abs(joint_offset_rad) > 1e-12
+                ):
+                    if isinstance(mate_limits, dict):
+                        if "min" in mate_limits and "max" in mate_limits:
+                            mate_limits = {
+                                **mate_limits,
+                                "min": mate_limits["min"] + joint_offset_rad,
+                                "max": mate_limits["max"] + joint_offset_rad,
+                            }
+                    elif hasattr(mate_limits, "min") and hasattr(mate_limits, "max"):
+                        offset_limits = {
+                            "min": mate_limits.min + joint_offset_rad,
+                            "max": mate_limits.max + joint_offset_rad,
+                        }
+                        if hasattr(mate_limits, "effort"):
+                            offset_limits["effort"] = mate_limits.effort
+                        if hasattr(mate_limits, "velocity"):
+                            offset_limits["velocity"] = mate_limits.velocity
+                        mate_limits = offset_limits
 
                 joint_rec = JointRecord(
                     name=mate_name,

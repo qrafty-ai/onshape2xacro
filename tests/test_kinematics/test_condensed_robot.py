@@ -9,6 +9,30 @@ from onshape2xacro.condensed_robot import (
 )
 
 
+def _rpy_to_matrix(rpy):
+    roll, pitch, yaw = rpy
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+
+    rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+    ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+    return rz @ ry @ rx
+
+
+def _joint_transform(joint, q):
+    transform = np.eye(4)
+    transform[:3, :3] = _rpy_to_matrix(joint.origin.rpy)
+    transform[:3, 3] = np.array(joint.origin.xyz)
+
+    angle = joint.axis[2] * q
+    c, s = np.cos(angle), np.sin(angle)
+    rot = np.eye(4)
+    rot[:3, :3] = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    return transform @ rot
+
+
 def test_to_id_tuple():
     assert to_id_tuple(None) == ()
     assert to_id_tuple(["a", "b"]) == ("a", "b")
@@ -447,3 +471,68 @@ def test_condensed_robot_invert_direction_flips_joint_limits():
     assert inverted_joint.limits["max"] == 0.2
     assert inverted_joint.limits["effort"] == 5.0
     assert inverted_joint.limits["velocity"] == 2.0
+
+
+def test_condensed_robot_joint_offset_shifts_origin_and_limits_preserving_transform():
+    graph = MagicMock()
+
+    class MockNode:
+        def __init__(self, name):
+            self.part_name = name
+            self.part_id = name
+            self.occurrence = f"occ_{name}"
+
+    node_a = MockNode("A")
+    node_b = MockNode("B")
+
+    edge = MagicMock()
+    edge.u = node_a
+    edge.v = node_b
+    edge.mate = create_mock_mate_with_entities("joint_1", node_a.occurrence)
+    edge.mate.limits = {"min": -1.0, "max": 2.0, "effort": 5.0, "velocity": 2.0}
+
+    graph.nodes = [node_a, node_b]
+    graph.edges = [edge]
+
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+    cad.mates = {}
+    cad.keys_by_id = {}
+
+    base_joint = list(
+        CondensedRobot.from_graph(
+            graph,
+            cad=cad,
+            mate_values={"id_joint_1": {"rotationZ": 0.4}},
+        ).edges(data=True)
+    )[0][2]["joint"]
+
+    offset = 0.3
+    shifted_joint = list(
+        CondensedRobot.from_graph(
+            graph,
+            cad=cad,
+            mate_values={"id_joint_1": {"rotationZ": 0.4, "joint_offset_rad": offset}},
+        ).edges(data=True)
+    )[0][2]["joint"]
+
+    assert shifted_joint.limits["min"] == pytest.approx(
+        base_joint.limits["min"] + offset
+    )
+    assert shifted_joint.limits["max"] == pytest.approx(
+        base_joint.limits["max"] + offset
+    )
+    assert shifted_joint.limits["effort"] == base_joint.limits["effort"]
+    assert shifted_joint.limits["velocity"] == base_joint.limits["velocity"]
+
+    expected_origin_delta = -base_joint.axis[2] * offset
+    assert shifted_joint.origin.rpy[2] == pytest.approx(
+        base_joint.origin.rpy[2] + expected_origin_delta
+    )
+
+    q = 0.25
+    np.testing.assert_allclose(
+        _joint_transform(base_joint, q),
+        _joint_transform(shifted_joint, q + offset),
+        atol=1e-7,
+    )
