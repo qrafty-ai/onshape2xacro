@@ -99,6 +99,7 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
 
     assert "mate_values" in config_data
     assert config_data["mate_values"]["mate_joint_1"]["invert_direction"] is False
+    assert config_data["mate_values"]["mate_joint_1"]["joint_offset_rad"] == 0.0
     assert "link_names" in config_data
     assert config_data["link_names"] == {"link1": "link1", "link2": "link2"}
     assert config_data["export"]["name"] == "test_robot"

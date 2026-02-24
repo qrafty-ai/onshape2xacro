@@ -87,6 +87,7 @@ def _generate_default_mate_values(cad: CAD) -> Dict[str, Any]:
                     "featureId": m.id,
                     "mateName": getattr(m, "name", "unknown"),
                     "invert_direction": False,
+                    "joint_offset_rad": 0.0,
                     "rotationZ": 0.0,
                     "translationZ": 0.0,
                     "rotationX": 0.0,
