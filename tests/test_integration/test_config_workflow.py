@@ -40,7 +40,7 @@ def test_full_config_workflow(monkeypatch, tmp_path):
     )
 
     class MockExporter:
-        def __init__(self, client, cad):
+        def __init__(self, client, cad, configuration=""):
             pass
 
         def export_step(self, path):
