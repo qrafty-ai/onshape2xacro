@@ -32,21 +32,30 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
 
     # Mock credentials
     monkeypatch.setattr(pipeline, "get_credentials", lambda: ("access", "secret"))
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_configuration_arg",
+        lambda client, url, configuration: configuration.strip(),
+    )
 
     mock_cad = MockCAD()
     mock_cad.mates = {"joint_1": SimpleNamespace(id="mate_joint_1", name="joint_1")}
+    captured = {}
 
     # Mock CAD.from_url
     # pipeline.py imports OptimizedCAD from onshape2xacro.optimized_cad
+    def _mock_from_url(*args, **kwargs):
+        captured["from_url_configuration"] = kwargs.get("configuration")
+        return mock_cad
+
     monkeypatch.setattr(
-        "onshape2xacro.optimized_cad.OptimizedCAD.from_url",
-        lambda *args, **kwargs: mock_cad,
+        "onshape2xacro.optimized_cad.OptimizedCAD.from_url", _mock_from_url
     )
 
     # Mock StepMeshExporter to avoid API calls
     class MockExporter:
-        def __init__(self, client, cad):
-            pass
+        def __init__(self, client, cad, configuration=""):
+            captured["step_configuration"] = configuration
 
         def export_step(self, path):
             # Create dummy file
@@ -70,7 +79,15 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     )
 
     # Set CLI arguments
-    test_args = ["onshape2xacro", "fetch-cad", url, "--output", str(output_file)]
+    test_args = [
+        "onshape2xacro",
+        "fetch-cad",
+        url,
+        "--output",
+        str(output_file),
+        "--configuration",
+        "joint1=90deg",
+    ]
     monkeypatch.setattr("sys.argv", test_args)
 
     # Run main
@@ -103,6 +120,8 @@ def test_fetch_cad_command(monkeypatch, tmp_path):
     assert "link_names" in config_data
     assert config_data["link_names"] == {"link1": "link1", "link2": "link2"}
     assert config_data["export"]["name"] == "test_robot"
+    assert captured["from_url_configuration"] == "joint1=90deg"
+    assert captured["step_configuration"] == "joint1=90deg"
 
     # Verify mate_values.json is NOT saved
     assert not (output_file / "mate_values.json").exists()
@@ -120,7 +139,11 @@ def test_fetch_cad_existing_config_and_bom_warning(monkeypatch, tmp_path):
     (output_dir / "configuration.yaml").touch()
 
     config = FetchCadConfig(
-        url="http://url", output=output_dir, max_depth=5, bom=Path("missing_bom.csv")
+        url="http://url",
+        output=output_dir,
+        max_depth=5,
+        bom=Path("missing_bom.csv"),
+        configuration="joint1=90deg",
     )
 
     # Mocks
@@ -128,9 +151,15 @@ def test_fetch_cad_existing_config_and_bom_warning(monkeypatch, tmp_path):
     mock_cad = MagicMock()
     mock_cad.name = "robot"
 
+    captured = {}
+
+    def _mock_get_client_and_cad(u, d, configuration=""):
+        captured["from_url_configuration"] = configuration
+        return mock_client, mock_cad, configuration
+
     monkeypatch.setattr(
         "onshape2xacro.pipeline._get_client_and_cad",
-        lambda u, d: (mock_client, mock_cad),
+        _mock_get_client_and_cad,
     )
     monkeypatch.setattr(
         "onshape2xacro.pipeline.OptimizedCAD.from_url", lambda *args, **kwargs: mock_cad
@@ -138,9 +167,15 @@ def test_fetch_cad_existing_config_and_bom_warning(monkeypatch, tmp_path):
 
     # Mock StepMeshExporter
     mock_exporter = MagicMock()
+    captured_step_config = {}
+
+    def _mock_exporter_ctor(c, cad, configuration=""):
+        captured_step_config["configuration"] = configuration
+        return mock_exporter
+
     monkeypatch.setattr(
         "onshape2xacro.mesh_exporters.step.StepMeshExporter",
-        lambda c, cad: mock_exporter,
+        _mock_exporter_ctor,
     )
 
     # Mock internal helpers
@@ -171,3 +206,6 @@ def test_fetch_cad_existing_config_and_bom_warning(monkeypatch, tmp_path):
             "BOM file not found" in c for c in calls
         )
         assert any("already exists. Skipping generation" in c for c in calls)
+
+    assert captured["from_url_configuration"] == "joint1=90deg"
+    assert captured_step_config["configuration"] == "joint1=90deg"

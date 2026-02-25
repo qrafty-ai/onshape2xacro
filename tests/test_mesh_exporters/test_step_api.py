@@ -57,6 +57,32 @@ def test_export_step_success(mock_client, mock_cad, tmp_path):
     assert result == output_path
     assert output_path.read_bytes() == mock_download.content
     assert mock_client.request.call_count == 4
+    assert "configuration" not in mock_client.request.call_args_list[0].kwargs["body"]
+
+
+def test_export_step_with_configuration(mock_client, mock_cad, tmp_path):
+    exporter = StepMeshExporter(mock_client, mock_cad, configuration="joint1=90deg")
+    output_path = tmp_path / "output.step"
+
+    mock_post = MagicMock()
+    mock_post.json.return_value = {"id": "trans_id"}
+    mock_status = MagicMock()
+    mock_status.json.return_value = {
+        "requestState": "DONE",
+        "resultExternalDataIds": ["file_id"],
+    }
+    mock_download = MagicMock()
+    mock_download.content = b"ISO-10303-21;"
+
+    mock_client.request.side_effect = [mock_post, mock_status, mock_download]
+
+    with patch("time.sleep"):
+        exporter.export_step(output_path)
+
+    assert (
+        mock_client.request.call_args_list[0].kwargs["body"]["configuration"]
+        == "joint1=90deg"
+    )
 
 
 def test_export_step_zip_handling(mock_client, mock_cad, tmp_path):
