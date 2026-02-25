@@ -28,7 +28,7 @@ onshape2xacro = "onshape2xacro.cli:main"
 package = true
 
 [tool.uv.sources]
-onshape-robotics-toolkit = { git = "https://github.com/TomCC7/onshape-robotics-toolkit" }
+onshape-robotics-toolkit = { git = "https://github.com/neurobionics/onshape-robotics-toolkit" }
 
 [build-system]
 requires = ["setuptools>=61.0", "setuptools-scm>=8.0"]

@@ -483,11 +483,13 @@ class StepMeshExporter:
         cad: Any,
         asset_path: Path | None = None,
         deflection: float = 0.01,
+        configuration: str = "",
     ):
         self.client = client
         self.cad = cad
         self.asset_path = asset_path
         self.deflection = deflection
+        self.configuration = configuration
 
     def export_step(self, output_path: Path) -> Path:
         if self.client is None:
@@ -503,18 +505,22 @@ class StepMeshExporter:
                 "CAD object missing workspace identifiers (wtype/workspace_id)"
             )
 
+        translation_payload = {
+            "formatName": "STEP",
+            "stepUnit": "MILLIMETER",
+            "stepVersionString": "AP242",
+            "storeInDocument": False,
+            "includeExportIds": True,
+            "extractAssemblyHierarchy": False,
+            "flattenAssemblies": False,
+        }
+        if self.configuration:
+            translation_payload["configuration"] = self.configuration
+
         response = self.client.request(
             HTTP.POST,
             f"/api/assemblies/d/{did}/{wtype}/{wid}/e/{eid}/translations",
-            body={
-                "formatName": "STEP",
-                "stepUnit": "MILLIMETER",
-                "stepVersionString": "AP242",
-                "storeInDocument": False,
-                "includeExportIds": True,
-                "extractAssemblyHierarchy": False,
-                "flattenAssemblies": False,
-            },
+            body=translation_payload,
         )
         response.raise_for_status()
         translation_id = response.json().get("id")

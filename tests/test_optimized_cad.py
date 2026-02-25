@@ -1,7 +1,10 @@
 import pytest
 import asyncio
+from typing import cast, Any
 from unittest.mock import MagicMock, patch
+from pydantic import ValidationError
 
+from onshape_robotics_toolkit import Client
 from onshape_robotics_toolkit.models.assembly import (
     RootAssembly,
     SubAssembly,
@@ -94,7 +97,192 @@ def test_from_url_success(mock_client):
 def test_from_url_missing_client():
     url = "https://cad.onshape.com/documents/000000000000000000000001/w/000000000000000000000002/e/000000000000000000000003"
     with pytest.raises(ValueError, match="client must be provided"):
-        OptimizedCAD.from_url(url, client=None)
+        OptimizedCAD.from_url(url, client=cast(Client, cast(object, None)))
+
+
+def test_get_assembly_applies_mate_connector_cs_fallback(monkeypatch):
+    client = object.__new__(OptimizedClient)
+    client._url = "https://cad.onshape.com"
+
+    payload: Any = {
+        "rootAssembly": {
+            "instances": [],
+            "patterns": [],
+            "occurrences": [],
+            "features": [
+                {
+                    "id": "feature-1",
+                    "suppressed": False,
+                    "featureType": "mateConnector",
+                    "featureData": {
+                        "occurrence": ["occ-1"],
+                        "name": "frame_test",
+                    },
+                }
+            ],
+            "fullConfiguration": "default",
+            "configuration": "default",
+            "documentId": "000000000000000000000001",
+            "elementId": "000000000000000000000002",
+            "documentMicroversion": "000000000000000000000003",
+        },
+        "subAssemblies": [],
+        "parts": [],
+        "partStudioFeatures": [],
+    }
+
+    response = MagicMock(status_code=200)
+    response.json.return_value = payload
+    client.request = MagicMock(return_value=response)
+
+    monkeypatch.setattr(
+        "onshape_robotics_toolkit.utilities.helpers.clean_json_numerics",
+        lambda data, threshold, decimals: data,
+    )
+    monkeypatch.setattr(
+        "onshape_robotics_toolkit.config.record_document_config", lambda **kwargs: None
+    )
+    monkeypatch.setattr(
+        "onshape_robotics_toolkit.config.record_assembly_config", lambda **kwargs: None
+    )
+
+    target_error = ValidationError.from_exception_data(
+        "Assembly",
+        [
+            {
+                "type": "missing",
+                "loc": ("rootAssembly", "features", 0, "mateConnectorCS"),
+                "input": {"occurrence": ["occ-1"], "name": "frame_test"},
+            }
+        ],
+    )
+
+    validated_assembly = MagicMock()
+    calls = {"count": 0}
+
+    def _validate_side_effect(data):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise target_error
+        return validated_assembly
+
+    with patch(
+        "onshape2xacro.optimized_cad.Assembly.model_validate",
+        side_effect=_validate_side_effect,
+    ):
+        result = client.get_assembly(
+            did="000000000000000000000001",
+            wtype="w",
+            wid="000000000000000000000004",
+            eid="000000000000000000000002",
+            with_meta_data=False,
+        )
+
+    assert result is validated_assembly
+    assert calls["count"] == 2
+    assert payload["rootAssembly"]["features"][0]["featureData"]["mateConnectorCS"][
+        "origin"
+    ] == [0.0, 0.0, 0.0]
+
+
+def test_get_assembly_does_not_apply_fallback_for_non_target_validation_error(
+    monkeypatch,
+):
+    client = object.__new__(OptimizedClient)
+    client._url = "https://cad.onshape.com"
+
+    payload: Any = {
+        "rootAssembly": {
+            "instances": [],
+            "patterns": [],
+            "occurrences": [],
+            "features": [
+                {
+                    "id": "feature-1",
+                    "suppressed": False,
+                    "featureType": "mateConnector",
+                    "featureData": {
+                        "occurrence": ["occ-1"],
+                    },
+                }
+            ],
+            "fullConfiguration": "default",
+            "configuration": "default",
+            "documentId": "000000000000000000000001",
+            "elementId": "000000000000000000000002",
+            "documentMicroversion": "000000000000000000000003",
+        },
+        "subAssemblies": [],
+        "parts": [],
+        "partStudioFeatures": [],
+    }
+
+    response = MagicMock(status_code=200)
+    response.json.return_value = payload
+    client.request = MagicMock(return_value=response)
+
+    monkeypatch.setattr(
+        "onshape_robotics_toolkit.utilities.helpers.clean_json_numerics",
+        lambda data, threshold, decimals: data,
+    )
+    monkeypatch.setattr(
+        "onshape_robotics_toolkit.config.record_document_config", lambda **kwargs: None
+    )
+    monkeypatch.setattr(
+        "onshape_robotics_toolkit.config.record_assembly_config", lambda **kwargs: None
+    )
+
+    non_target_error = ValidationError.from_exception_data(
+        "Assembly",
+        [
+            {
+                "type": "missing",
+                "loc": ("rootAssembly", "features", 0, "name"),
+                "input": {"occurrence": ["occ-1"]},
+            }
+        ],
+    )
+
+    with patch(
+        "onshape2xacro.optimized_cad.Assembly.model_validate",
+        side_effect=non_target_error,
+    ):
+        with pytest.raises(ValidationError):
+            client.get_assembly(
+                did="000000000000000000000001",
+                wtype="w",
+                wid="000000000000000000000004",
+                eid="000000000000000000000002",
+                with_meta_data=False,
+            )
+
+    assert (
+        "mateConnectorCS" not in payload["rootAssembly"]["features"][0]["featureData"]
+    )
+
+
+def test_get_assembly_raises_clear_error_for_onshape_error_payload():
+    client = object.__new__(OptimizedClient)
+    client._url = "https://cad.onshape.com"
+
+    response = MagicMock(status_code=400)
+    response.json.return_value = {
+        "message": "An illegal argument was provided",
+        "status": 400,
+        "errorCode": 0,
+        "moreInfoUrl": "",
+    }
+    client.request = MagicMock(return_value=response)
+
+    with pytest.raises(RuntimeError, match="An illegal argument was provided"):
+        client.get_assembly(
+            did="000000000000000000000001",
+            wtype="w",
+            wid="000000000000000000000004",
+            eid="000000000000000000000002",
+            configuration="original gripper",
+            with_meta_data=False,
+        )
 
 
 def test_fetch_occurrences_deduplication(mock_cad, mock_client):

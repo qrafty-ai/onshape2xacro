@@ -90,6 +90,7 @@ def test_export_step_uses_workspace_id(tmp_path: Path, monkeypatch):
     assert exporter.client.paths[0].endswith("/translations")
     assert exporter.client.bodies
     assert exporter.client.bodies[0]["formatName"] == "STEP"
+    assert "configuration" not in exporter.client.bodies[0]
     assert exporter.client.bodies[0]["stepVersionString"] == "AP242"
     assert exporter.client.bodies[0]["storeInDocument"] is False
     assert exporter.client.bodies[0]["includeExportIds"] is True

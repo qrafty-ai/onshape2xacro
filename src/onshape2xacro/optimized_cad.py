@@ -1,10 +1,13 @@
 import asyncio
 from functools import lru_cache
 from typing import Optional, List, Any
+from pydantic import ValidationError
 from loguru import logger
 
 from onshape_robotics_toolkit import CAD, Client
+from onshape_robotics_toolkit.connect import HTTP
 from onshape_robotics_toolkit.models.assembly import (
+    Assembly,
     RootAssembly,
     SubAssembly,
     MateFeatureData,
@@ -17,6 +20,7 @@ from onshape_robotics_toolkit.models.document import (
     parse_url,
     Document,
     DocumentMetaData,
+    generate_url,
 )
 from onshape_robotics_toolkit.parse import PathKey
 from onshape_robotics_toolkit.utilities.helpers import (
@@ -31,10 +35,202 @@ class OptimizedClient(Client):
     Optimized version of Client class with cached metadata fetches.
     """
 
+    @staticmethod
+    def _default_mate_connector_cs() -> dict[str, list[float]]:
+        return {
+            "xAxis": [1.0, 0.0, 0.0],
+            "yAxis": [0.0, 1.0, 0.0],
+            "zAxis": [0.0, 0.0, 1.0],
+            "origin": [0.0, 0.0, 0.0],
+        }
+
+    @classmethod
+    def _normalize_missing_mate_connector_cs(cls, assembly_data: dict[str, Any]) -> int:
+        def _normalize_features(features: Any) -> int:
+            if not isinstance(features, list):
+                return 0
+
+            normalized = 0
+            for feature in features:
+                if not isinstance(feature, dict):
+                    continue
+                if feature.get("featureType") != "mateConnector":
+                    continue
+
+                feature_data = feature.get("featureData")
+                if not isinstance(feature_data, dict):
+                    continue
+
+                if feature_data.get("mateConnectorCS") is None:
+                    feature_data["mateConnectorCS"] = cls._default_mate_connector_cs()
+                    normalized += 1
+
+            return normalized
+
+        normalized_count = 0
+
+        root_assembly = assembly_data.get("rootAssembly")
+        if isinstance(root_assembly, dict):
+            normalized_count += _normalize_features(root_assembly.get("features"))
+
+        sub_assemblies = assembly_data.get("subAssemblies")
+        if isinstance(sub_assemblies, list):
+            for sub_assembly in sub_assemblies:
+                if not isinstance(sub_assembly, dict):
+                    continue
+                normalized_count += _normalize_features(sub_assembly.get("features"))
+
+        return normalized_count
+
+    @staticmethod
+    def _is_missing_mate_connector_cs_error(error: ValidationError) -> bool:
+        for detail in error.errors():
+            loc = detail.get("loc", ())
+            if "mateConnectorCS" not in loc:
+                continue
+            if detail.get("type") != "missing":
+                continue
+            if "features" not in loc:
+                continue
+            return True
+
+        return False
+
+    def get_assembly(
+        self,
+        did: str,
+        wtype: str,
+        wid: str,
+        eid: str,
+        configuration: str = "default",
+        log_response: bool = True,
+        with_meta_data: bool = True,
+    ) -> Assembly:
+        from onshape_robotics_toolkit.config import (
+            record_assembly_config,
+            record_document_config,
+        )
+        from onshape_robotics_toolkit.utilities.helpers import clean_json_numerics
+
+        request_path = (
+            "/api/assemblies/d/" + did + "/" + wtype + "/" + wid + "/e/" + eid
+        )
+        res = self.request(
+            HTTP.GET,
+            request_path,
+            query={
+                "includeMateFeatures": "true",
+                "includeMateConnectors": "true",
+                "includeNonSolids": "true",
+                "configuration": configuration,
+            },
+            log_response=log_response,
+        )
+
+        if res.status_code == 401 or res.status_code == 403:
+            logger.warning(f"Unauthorized access to document: {did}")
+            logger.warning("Please check the API keys in your env file.")
+            exit(1)
+
+        if res.status_code == 404:
+            logger.error(f"Assembly not found: {did}")
+            logger.error(
+                generate_url(
+                    base_url=self._url,
+                    did=did,
+                    wtype=wtype,
+                    wid=wid,
+                    eid=eid,
+                )
+            )
+            exit(1)
+
+        if res.status_code >= 400:
+            error_payload: Any = None
+            try:
+                error_payload = res.json()
+            except Exception:
+                error_payload = None
+
+            message = ""
+            if isinstance(error_payload, dict):
+                raw_message = error_payload.get("message")
+                if isinstance(raw_message, str):
+                    message = raw_message
+
+            if not message:
+                message = f"HTTP {res.status_code}"
+
+            raise RuntimeError(
+                f"Failed to fetch assembly from Onshape: {message}. "
+                f"configuration='{configuration}'"
+            )
+
+        assembly_data = clean_json_numerics(res.json(), threshold=1e-10, decimals=8)
+
+        if (
+            isinstance(assembly_data, dict)
+            and "rootAssembly" not in assembly_data
+            and "message" in assembly_data
+        ):
+            raise RuntimeError(
+                "Failed to fetch assembly from Onshape: "
+                f"{assembly_data.get('message')}. configuration='{configuration}'"
+            )
+
+        try:
+            assembly = Assembly.model_validate(assembly_data)
+        except ValidationError as validation_error:
+            if not self._is_missing_mate_connector_cs_error(validation_error):
+                raise
+
+            normalized_count = self._normalize_missing_mate_connector_cs(assembly_data)
+            if normalized_count == 0:
+                raise
+
+            logger.warning(
+                "Detected {} mateConnector feature(s) without mateConnectorCS; "
+                "applied identity-frame compatibility fallback.",
+                normalized_count,
+            )
+
+            try:
+                assembly = Assembly.model_validate(assembly_data)
+            except ValidationError:
+                raise validation_error
+        document = Document(did=did, wtype=wtype, wid=wid, eid=eid)
+        assembly.document = document
+
+        if with_meta_data:
+            assembly.name = self.get_assembly_name(did, wtype, wid, eid, configuration)
+            document_meta_data = self.get_document_metadata(did)
+            assembly.document.name = document_meta_data.name
+
+        record_document_config(
+            url=getattr(assembly.document, "url", None),
+            base_url=self._url,
+            did=did,
+            wtype=wtype,
+            wid=wid,
+            eid=eid,
+            name=getattr(assembly.document, "name", None),
+        )
+        record_assembly_config(
+            element_id=eid,
+            configuration=configuration,
+            log_response=log_response,
+            with_meta_data=with_meta_data,
+        )
+
+        return assembly
+
     @lru_cache(maxsize=128)
-    def get_document_metadata(self, did: str) -> DocumentMetaData:
+    def _get_document_metadata_cached(self, did: str) -> DocumentMetaData:
         logger.debug(f"Fetching document metadata for {did} (cached)")
         return super().get_document_metadata(did)
+
+    def get_document_metadata(self, did: str) -> DocumentMetaData:
+        return self._get_document_metadata_cached(did)
 
 
 class OptimizedCAD(CAD):

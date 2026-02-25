@@ -163,3 +163,122 @@ def test_pipeline_credentials_error(monkeypatch):
 
     with pytest.raises(ValueError, match="Onshape credentials not found"):
         _get_client_and_cad("http://url", 5)
+
+
+def test_pipeline_configuration_name_resolves(monkeypatch):
+    from onshape2xacro.pipeline import _get_client_and_cad
+
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.get_credentials", lambda: ("access", "secret")
+    )
+
+    class DummyResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "configurationParameters": [
+                    {
+                        "message": {
+                            "parameterId": "List_EqbreqzJQ2Vu6y",
+                            "parameterName": "Configuration",
+                            "options": [
+                                {
+                                    "message": {
+                                        "option": "Default",
+                                        "optionName": "Default",
+                                    }
+                                },
+                                {
+                                    "message": {
+                                        "option": "original_gripper",
+                                        "optionName": "original gripper",
+                                    }
+                                },
+                            ],
+                        }
+                    }
+                ]
+            }
+
+    class DummyClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def request(self, method, path, **kwargs):
+            return DummyResponse()
+
+    captured = {}
+
+    def _mock_from_url(url, **kwargs):
+        captured["from_url_kwargs"] = kwargs
+        return SimpleNamespace(name="dummy")
+
+    monkeypatch.setattr("onshape2xacro.pipeline.OptimizedClient", DummyClient)
+    monkeypatch.setattr("onshape2xacro.pipeline.OptimizedCAD.from_url", _mock_from_url)
+
+    _, _, resolved = _get_client_and_cad(
+        "https://cad.onshape.com/documents/a0ef8c2702b6aff0fdcf6530/w/ad2b0ef097cbce69232e9a71/e/ee09e09777738cd7d63862b2",
+        5,
+        configuration="original gripper",
+    )
+
+    assert resolved == "List_EqbreqzJQ2Vu6y=original_gripper"
+    assert (
+        captured["from_url_kwargs"]["configuration"]
+        == "List_EqbreqzJQ2Vu6y=original_gripper"
+    )
+
+
+def test_pipeline_configuration_unknown_value_error(monkeypatch):
+    import pytest
+    from onshape2xacro.pipeline import _get_client_and_cad
+
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.get_credentials", lambda: ("access", "secret")
+    )
+
+    class DummyResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "configurationParameters": [
+                    {
+                        "message": {
+                            "parameterId": "List_EqbreqzJQ2Vu6y",
+                            "parameterName": "Configuration",
+                            "options": [
+                                {
+                                    "message": {
+                                        "option": "Default",
+                                        "optionName": "Default",
+                                    }
+                                },
+                                {
+                                    "message": {
+                                        "option": "original_gripper",
+                                        "optionName": "original gripper",
+                                    }
+                                },
+                            ],
+                        }
+                    }
+                ]
+            }
+
+    class DummyClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def request(self, method, path, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setattr("onshape2xacro.pipeline.OptimizedClient", DummyClient)
+
+    with pytest.raises(ValueError, match="Unknown configuration value"):
+        _get_client_and_cad(
+            "https://cad.onshape.com/documents/a0ef8c2702b6aff0fdcf6530/w/ad2b0ef097cbce69232e9a71/e/ee09e09777738cd7d63862b2",
+            5,
+            configuration="not a real option",
+        )

@@ -1,8 +1,11 @@
 import os
+import re
 from pathlib import Path
 from typing import Dict, Any
 import numpy as np
 from onshape_robotics_toolkit import Client, CAD, KinematicGraph
+from onshape_robotics_toolkit.connect import HTTP
+from onshape_robotics_toolkit.models.document import parse_url
 from onshape2xacro.optimized_cad import OptimizedCAD, OptimizedClient
 from onshape_robotics_toolkit.models.assembly import Occurrence
 from onshape2xacro.condensed_robot import CondensedRobot
@@ -47,7 +50,150 @@ def _setup_credentials():
     return access_key, secret_key
 
 
-def _get_client_and_cad(url: str, max_depth: int) -> tuple[Client, CAD]:
+def _normalize_configuration_arg(configuration: str) -> str:
+    return configuration.strip()
+
+
+def _canonicalize_config_value(value: str) -> str:
+    return re.sub(r"[\s_-]+", "_", value.strip().lower())
+
+
+def _extract_configuration_choices(
+    configuration_payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    choices: list[dict[str, str]] = []
+
+    raw_parameters = configuration_payload.get("configurationParameters")
+    if not isinstance(raw_parameters, list):
+        return choices
+
+    for raw_param in raw_parameters:
+        if not isinstance(raw_param, dict):
+            continue
+        message = raw_param.get("message")
+        if not isinstance(message, dict):
+            continue
+
+        parameter_id = message.get("parameterId")
+        parameter_name = message.get("parameterName")
+        options = message.get("options")
+        if not isinstance(parameter_id, str) or not isinstance(options, list):
+            continue
+
+        for raw_option in options:
+            if not isinstance(raw_option, dict):
+                continue
+            option_message = raw_option.get("message")
+            if not isinstance(option_message, dict):
+                continue
+
+            option_value = option_message.get("option")
+            option_name = option_message.get("optionName")
+            if not isinstance(option_value, str):
+                continue
+
+            display_name = (
+                option_name
+                if isinstance(option_name, str) and option_name
+                else option_value
+            )
+            parameter_label = (
+                parameter_name
+                if isinstance(parameter_name, str) and parameter_name
+                else parameter_id
+            )
+
+            choices.append(
+                {
+                    "expression": f"{parameter_id}={option_value}",
+                    "display_name": display_name,
+                    "option_value": option_value,
+                    "parameter_name": parameter_label,
+                }
+            )
+
+    return choices
+
+
+def _resolve_configuration_arg(client: Client, url: str, configuration: str) -> str:
+    normalized = _normalize_configuration_arg(configuration)
+    if not normalized:
+        return ""
+
+    if "=" in normalized:
+        return normalized
+
+    _, did, wtype, wid, eid = parse_url(url)
+
+    config_res = client.request(
+        HTTP.GET,
+        f"/api/elements/d/{did}/{wtype}/{wid}/e/{eid}/configuration",
+        log_response=False,
+    )
+
+    if config_res.status_code >= 400:
+        message = f"HTTP {config_res.status_code}"
+        try:
+            payload = config_res.json()
+            if isinstance(payload, dict):
+                raw_message = payload.get("message")
+                if isinstance(raw_message, str) and raw_message.strip():
+                    message = raw_message
+        except Exception:
+            pass
+        raise ValueError(
+            f"Unable to resolve configuration name '{normalized}': {message}. "
+            "Please pass a full Onshape expression like 'key=value'."
+        )
+
+    config_payload = config_res.json()
+    if not isinstance(config_payload, dict):
+        raise ValueError(
+            "Could not resolve configuration name automatically. "
+            "Please pass a full Onshape expression, e.g. 'key=value'."
+        )
+
+    choices = _extract_configuration_choices(config_payload)
+    if not choices:
+        raise ValueError(
+            "Could not find configuration options for this assembly. "
+            "Please pass a full Onshape expression, e.g. 'key=value'."
+        )
+
+    target = _canonicalize_config_value(normalized)
+    matches = [
+        choice
+        for choice in choices
+        if _canonicalize_config_value(choice["display_name"]) == target
+        or _canonicalize_config_value(choice["option_value"]) == target
+    ]
+
+    if len(matches) == 1:
+        resolved = matches[0]["expression"]
+        print(f"Resolved configuration '{normalized}' to '{resolved}'.")
+        return resolved
+
+    if len(matches) > 1:
+        rendered_matches = "; ".join(
+            f"{choice['parameter_name']}={choice['display_name']}" for choice in matches
+        )
+        raise ValueError(
+            f"Configuration value '{normalized}' is ambiguous ({rendered_matches}). "
+            "Please pass a full expression like 'key=value'."
+        )
+
+    available_names = ", ".join(sorted({choice["display_name"] for choice in choices}))
+    raise ValueError(
+        f"Unknown configuration value '{normalized}'. Available options: {available_names}. "
+        "You can also pass a full expression like 'key=value'."
+    )
+
+
+def _get_client_and_cad(
+    url: str,
+    max_depth: int,
+    configuration: str = "",
+) -> tuple[Client, CAD, str]:
     """Setup client and fetch CAD assembly."""
     if not _setup_credentials()[0]:
         raise ValueError(
@@ -57,11 +203,19 @@ def _get_client_and_cad(url: str, max_depth: int) -> tuple[Client, CAD]:
         )
 
     client = OptimizedClient(env=None, base_url="https://cad.onshape.com")
+    resolved_configuration = _resolve_configuration_arg(client, url, configuration)
+
     print(f"Fetching assembly from {url}...")
-    cad = OptimizedCAD.from_url(
-        url, client=client, max_depth=max_depth, fetch_mass_properties=False
-    )
-    return client, cad
+    from_url_kwargs: dict[str, Any] = {
+        "client": client,
+        "max_depth": max_depth,
+        "fetch_mass_properties": False,
+    }
+    if resolved_configuration:
+        from_url_kwargs["configuration"] = resolved_configuration
+
+    cad = OptimizedCAD.from_url(url, **from_url_kwargs)
+    return client, cad, resolved_configuration
 
 
 def _try_get_client() -> Client | None:
@@ -222,7 +376,7 @@ def run_export(
 
 def run_visualize(config: VisualizeConfig):
     """Visualize the kinematic graph."""
-    _, cad = _get_client_and_cad(config.url, config.max_depth)
+    _, cad, _ = _get_client_and_cad(config.url, config.max_depth)
 
     print("Building kinematic graph...")
     graph = KinematicGraph.from_cad(cad)
@@ -240,7 +394,11 @@ def run_fetch_cad(config: FetchCadConfig):
     from onshape2xacro.mesh_exporters.step import StepMeshExporter
     from onshape2xacro.config.export_config import ExportConfiguration, ExportOptions
 
-    client, cad = _get_client_and_cad(config.url, config.max_depth)
+    client, cad, resolved_configuration = _get_client_and_cad(
+        config.url,
+        config.max_depth,
+        configuration=config.configuration,
+    )
 
     output_dir = Path(config.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -250,7 +408,7 @@ def run_fetch_cad(config: FetchCadConfig):
         pickle.dump(cad, f)
 
     print(f"Exporting STEP assembly to {output_dir / 'assembly.step'}...")
-    exporter = StepMeshExporter(client, cad)
+    exporter = StepMeshExporter(client, cad, configuration=resolved_configuration)
     exporter.export_step(output_dir / "assembly.step")
 
     print("Generating default mate values...")

@@ -90,6 +90,8 @@ class FetchCadConfig:
     """Output directory to save the CAD data (cad.pickle and assembly.zip)."""
     bom: Path | None = None
     """Path to BOM CSV file to copy to output directory for inertia calculation."""
+    configuration: str = ""
+    """Optional Onshape configuration string to use when fetching/exporting (e.g. key=value;key2=value2)."""
     max_depth: int = 5
     """Maximum subassembly traversal depth."""
 
