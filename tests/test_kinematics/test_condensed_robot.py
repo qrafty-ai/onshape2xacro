@@ -324,6 +324,67 @@ def test_condensed_robot_virtual_frames():
     assert np.allclose(joint.origin.xyz, [0.1, 0.0, 0.0])
 
 
+def test_condensed_robot_mirrors_duplicate_side_frame_names():
+    graph = MagicMock()
+
+    class MockNode:
+        def __init__(self, id, name):
+            self.id = id
+            self.part_id = f"p_{id}"
+            self.path = [f"occ_{id}"]
+            self.occurrence = [f"occ_{id}"]
+            self.part_name = name
+            self.parent = None
+
+    left_node = MockNode("left", "Left Arm")
+    right_node = MockNode("right", "Right Arm")
+    graph.nodes = [left_node, right_node]
+
+    class MockEdge:
+        def __init__(self, u, v):
+            self.u = u
+            self.v = v
+            self.mate = create_mock_mate_with_entities("joint_1", u.occurrence[0])
+
+    graph.edges = [MockEdge(left_node, right_node)]
+
+    cad = MagicMock()
+    cad.get_transform.return_value = np.eye(4)
+
+    pk_left = MagicMock()
+    pk_left.path = tuple(left_node.occurrence)
+    pk_right = MagicMock()
+    pk_right.path = tuple(right_node.occurrence)
+    cad.keys_by_id = {
+        tuple(left_node.occurrence): pk_left,
+        tuple(right_node.occurrence): pk_right,
+    }
+
+    left_oak = MagicMock()
+    left_oak.name = "frame_right_oak"
+    left_oak.occurrence = left_node.occurrence
+    left_oak.mateConnectorCS.to_tf = np.eye(4)
+
+    right_oak = MagicMock()
+    right_oak.name = "frame_right_oak"
+    right_oak.occurrence = right_node.occurrence
+    right_oak.mateConnectorCS.to_tf = np.eye(4)
+
+    cad.mate_connectors = [left_oak, right_oak]
+
+    robot = CondensedRobot.from_graph(
+        graph,
+        cad=cad,
+        name="TestRobot",
+        mate_values={"id_joint_1": {"rotationZ": 0.0}},
+    )
+
+    link_names = [data["link"].name for _, data in robot.nodes(data=True)]
+    assert "frame_left_oak" in link_names
+    assert "frame_right_oak" in link_names
+    assert "frame_right_oak_1" not in link_names
+
+
 def test_condensed_robot_invert_direction_flips_axis_sign():
     graph = MagicMock()
 

@@ -649,6 +649,18 @@ class CondensedRobot(Robot):
                 if parent_link_rec is None:
                     continue
 
+                parent_link_lower = parent_link_name.lower()
+                if (
+                    frame_name.startswith("frame_right_")
+                    and "left" in parent_link_lower
+                ):
+                    frame_name = f"frame_left_{frame_name[len('frame_right_') :]}"
+                elif (
+                    frame_name.startswith("frame_left_")
+                    and "right" in parent_link_lower
+                ):
+                    frame_name = f"frame_right_{frame_name[len('frame_left_') :]}"
+
                 T_part_mc = mc.mateConnectorCS.to_tf
 
                 # Get part world transform
