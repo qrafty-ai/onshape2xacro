@@ -230,6 +230,39 @@ def test_pipeline_configuration_name_resolves(monkeypatch):
     )
 
 
+def test_pipeline_passes_empty_configuration_through(monkeypatch):
+    from onshape2xacro.pipeline import _get_client_and_cad
+
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline.get_credentials", lambda: ("access", "secret")
+    )
+    monkeypatch.setattr(
+        "onshape2xacro.pipeline._resolve_configuration_arg",
+        lambda client, url, configuration: "",
+    )
+
+    class DummyClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    captured = {}
+
+    def _mock_from_url(url, **kwargs):
+        captured["from_url_kwargs"] = kwargs
+        return SimpleNamespace(name="dummy")
+
+    monkeypatch.setattr("onshape2xacro.pipeline.OptimizedClient", DummyClient)
+    monkeypatch.setattr("onshape2xacro.pipeline.OptimizedCAD.from_url", _mock_from_url)
+
+    _, _, resolved = _get_client_and_cad(
+        "https://cad.onshape.com/documents/d/w/w/e/e", 5
+    )
+
+    assert resolved == ""
+    assert "configuration" in captured["from_url_kwargs"]
+    assert captured["from_url_kwargs"]["configuration"] == ""
+
+
 def test_pipeline_configuration_unknown_value_error(monkeypatch):
     import pytest
     from onshape2xacro.pipeline import _get_client_and_cad
