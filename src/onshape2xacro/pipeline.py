@@ -210,9 +210,8 @@ def _get_client_and_cad(
         "client": client,
         "max_depth": max_depth,
         "fetch_mass_properties": False,
+        "configuration": resolved_configuration,
     }
-    if resolved_configuration:
-        from_url_kwargs["configuration"] = resolved_configuration
 
     cad = OptimizedCAD.from_url(url, **from_url_kwargs)
     return client, cad, resolved_configuration

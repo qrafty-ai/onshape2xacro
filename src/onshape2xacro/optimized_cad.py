@@ -102,7 +102,7 @@ class OptimizedClient(Client):
         wtype: str,
         wid: str,
         eid: str,
-        configuration: str = "default",
+        configuration: str = "",
         log_response: bool = True,
         with_meta_data: bool = True,
     ) -> Assembly:
@@ -245,7 +245,7 @@ class OptimizedCAD(CAD):
         *,
         client: Client,
         max_depth: int = 0,
-        configuration: str = "default",
+        configuration: str = "",
         log_response: bool = True,
         with_meta_data: bool = True,
         fetch_mass_properties: bool = True,
