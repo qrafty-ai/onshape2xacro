@@ -57,6 +57,24 @@ class XacroSerializer(RobotSerializer):
         self._add_robot_macro(root, robot, config=config, mesh_map={})
         return ET.tostring(root, pretty_print=True, encoding="unicode")
 
+    def _get_default_joint_transform(self, joint: JointRecord) -> Dict[str, str]:
+        """Build default runtime joint transform data."""
+        if hasattr(joint, "origin") and joint.origin is not None:
+            origin = joint.origin
+            return {
+                "xyz": f"{origin.xyz[0]} {origin.xyz[1]} {origin.xyz[2]}",
+                "rpy": f"{origin.rpy[0]} {origin.rpy[1]} {origin.rpy[2]}",
+            }
+        return {"xyz": "0 0 0", "rpy": "0 0 0"}
+
+    def _get_serialized_joint_name(
+        self, joint: JointRecord, force_fixed: bool = False
+    ) -> str:
+        """Build the exported joint name used in xacro/config keys."""
+        if force_fixed:
+            return sanitize_name(joint.name)
+        return sanitize_name(get_joint_name(joint.name))
+
     def save(
         self,
         robot: "Robot",
@@ -203,6 +221,18 @@ class XacroSerializer(RobotSerializer):
             "{http://www.ros.org/wiki/xacro}property",
             name="inertials",
             value="${inertials_file['inertials']}",
+        )
+        ET.SubElement(
+            entry_point_root,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="joint_transforms_file",
+            value="${load_yaml('../config/joint_transforms.yaml')}",
+        )
+        ET.SubElement(
+            entry_point_root,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="joint_transforms",
+            value="${joint_transforms_file['joint_transforms']}",
         )
 
         # Argument for visual mesh format
@@ -366,12 +396,23 @@ class XacroSerializer(RobotSerializer):
         # Construct configuration dictionaries for inline properties (support for preview/memory-only export)
         joint_limits = {}
         inertials = {}
+        joint_transforms = {}
 
         for parent, child in robot.edges:
             edge_data = robot.get_edge_data(parent, child)
-            joint = edge_data.get("data")
-            if joint and is_joint(joint.name):
-                name = sanitize_name(get_joint_name(joint.name))
+            joint = edge_data.get("joint") or edge_data.get("data")
+            if joint:
+                is_movable_joint = is_joint(joint.name)
+                name = self._get_serialized_joint_name(
+                    joint, force_fixed=not is_movable_joint
+                )
+
+                joint_transforms[name] = config.get_joint_transform(
+                    name, self._get_default_joint_transform(joint)
+                )
+
+                if not is_movable_joint:
+                    continue
 
                 default_limit = {
                     "lower": -3.14,
@@ -436,6 +477,12 @@ class XacroSerializer(RobotSerializer):
             "{http://www.ros.org/wiki/xacro}property",
             name="inertials",
             value=f"${{{str(inertials)}}}",
+        )
+        ET.SubElement(
+            macro,
+            "{http://www.ros.org/wiki/xacro}property",
+            name="joint_transforms",
+            value=f"${{{str(joint_transforms)}}}",
         )
 
         for node, data in robot.nodes(data=True):
@@ -547,11 +594,7 @@ class XacroSerializer(RobotSerializer):
         config: ConfigOverride,
         force_fixed: bool = False,
     ):
-        # For non-joint_* mates, use the original name (not removing joint_ prefix)
-        if force_fixed:
-            name = sanitize_name(joint.name)
-        else:
-            name = sanitize_name(get_joint_name(joint.name))
+        name = self._get_serialized_joint_name(joint, force_fixed=force_fixed)
 
         # JointRecord with stored origin from transformation pipeline
         joint_el = ET.Element("joint")
@@ -570,17 +613,12 @@ class XacroSerializer(RobotSerializer):
                 jtype = "continuous"
         joint_el.set("type", jtype)
 
-        # Set Origin
-        if hasattr(joint, "origin") and joint.origin is not None:
-            origin = joint.origin
-            ET.SubElement(
-                joint_el,
-                "origin",
-                xyz=f"{origin.xyz[0]} {origin.xyz[1]} {origin.xyz[2]}",
-                rpy=f"{origin.rpy[0]} {origin.rpy[1]} {origin.rpy[2]}",
-            )
-        else:
-            ET.SubElement(joint_el, "origin", xyz="0 0 0", rpy="0 0 0")
+        ET.SubElement(
+            joint_el,
+            "origin",
+            xyz=f"${{joint_transforms['{name}']['xyz']}}",
+            rpy=f"${{joint_transforms['{name}']['rpy']}}",
+        )
 
         # Update parent and child links with prefix
         ET.SubElement(
@@ -668,11 +706,22 @@ class XacroSerializer(RobotSerializer):
 
         joint_limits = {}
         inertials = {}
+        joint_transforms = {}
         for parent, child in robot.edges:
             edge_data = robot.get_edge_data(parent, child)
-            joint = edge_data.get("data")
-            if joint and is_joint(joint.name):
-                name = sanitize_name(get_joint_name(joint.name))
+            joint = edge_data.get("joint") or edge_data.get("data")
+            if joint:
+                is_movable_joint = is_joint(joint.name)
+                name = self._get_serialized_joint_name(
+                    joint, force_fixed=not is_movable_joint
+                )
+
+                joint_transforms[name] = config.get_joint_transform(
+                    name, self._get_default_joint_transform(joint)
+                )
+
+                if not is_movable_joint:
+                    continue
 
                 default_limit = {
                     "lower": -3.14,
@@ -746,6 +795,8 @@ class XacroSerializer(RobotSerializer):
             yaml.dump({"joint_limits": joint_limits}, f)
         with open(config_dir / "inertials.yaml", "w") as f:
             yaml.dump({"inertials": inertials}, f)
+        with open(config_dir / "joint_transforms.yaml", "w") as f:
+            yaml.dump({"joint_transforms": joint_transforms}, f)
 
     def _write_missing_meshes_prompt(
         self,
