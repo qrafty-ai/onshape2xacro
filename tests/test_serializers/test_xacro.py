@@ -1,6 +1,7 @@
 import pytest
 import networkx as nx
 import numpy as np
+import yaml
 from types import SimpleNamespace
 from unittest.mock import patch
 from onshape_robotics_toolkit.models.link import Origin
@@ -146,9 +147,17 @@ def test_xacro_joint_origin(tmp_path):
 
         with open(out / "urdf" / "r.xacro", "r") as f:
             content = f.read()
-            (tmp_path / "last_content.xacro").write_text(content)
-            assert "1.0 2.0 3.0" in content or "1 2 3" in content
-            assert 'rpy="1.57079' in content
+            assert "joint_transforms" in content
+            assert "joint_transforms['revolute']['xyz']" in content
+            assert "joint_transforms['revolute']['rpy']" in content
+
+        with open(out / "config" / "joint_transforms.yaml", "r") as f:
+            data = yaml.safe_load(f)
+            assert data["joint_transforms"]["revolute"]["xyz"] in {
+                "1.0 2.0 3.0",
+                "1 2 3",
+            }
+            assert data["joint_transforms"]["revolute"]["rpy"].startswith("1.57079")
 
         # Check visual/collision origins for links are "0 0 0" when mesh_map is present
         # Both link_a and link_b should have identity origins for their visuals/collisions

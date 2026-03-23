@@ -11,6 +11,7 @@ class ConfigOverride:
     joint_limits: Dict[str, Dict[str, float]] = field(default_factory=dict)
     inertials: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     dynamics: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    joint_transforms: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Optional[Path]) -> "ConfigOverride":
@@ -25,6 +26,7 @@ class ConfigOverride:
             joint_limits=data.get("joint_limits", {}),
             inertials=data.get("inertials", {}),
             dynamics=data.get("dynamics", {}),
+            joint_transforms=data.get("joint_transforms", {}),
         )
 
     def get_joint_limit(self, name: str, default: Dict[str, float]) -> Dict[str, float]:
@@ -41,5 +43,13 @@ class ConfigOverride:
         if name in self.inertials:
             res = default.copy()
             res.update(self.inertials[name])
+            return res
+        return default
+
+    def get_joint_transform(self, name: str, default: Dict[str, str]) -> Dict[str, str]:
+        """Get overridden joint transform or return default."""
+        if name in self.joint_transforms:
+            res = default.copy()
+            res.update(self.joint_transforms[name])
             return res
         return default

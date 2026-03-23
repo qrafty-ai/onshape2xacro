@@ -44,6 +44,70 @@ def test_xacro_serializer_serialize_flattened():
     xacro_str = serializer.serialize(robot)
     assert 'name="flat_robot"' in xacro_str
     assert '<link name="${prefix}base_link">' in xacro_str
+    assert "joint_transforms" in xacro_str
+
+
+def test_xacro_serializer_serialize_joint_transform_override():
+    from onshape2xacro.config import ConfigOverride
+
+    robot = nx.DiGraph()
+    robot.name = "flat_robot"
+    node_a = "link_a"
+    node_b = "link_b"
+    robot.add_node(node_a, data=LinkRecord("link_a", [], [], [], keys=["pA"]))
+    robot.add_node(node_b, data=LinkRecord("link_b", [], [], [], keys=["pB"]))
+
+    joint = JointRecord(
+        "joint_arm",
+        "REVOLUTE",
+        "link_a",
+        "link_b",
+        (0, 0, 1),
+        SimpleNamespace(name="joint_arm"),
+    )
+    robot.add_edge(node_a, node_b, data=joint)
+
+    serializer = XacroSerializer()
+    xacro_str = serializer.serialize(
+        robot,
+        config=ConfigOverride(joint_transforms={"arm": {"xyz": "1 2 3"}}),
+    )
+
+    assert "joint_transforms" in xacro_str
+    assert "'arm': {'xyz': '1 2 3', 'rpy': '0 0 0'}" in xacro_str
+    assert "joint_transforms['arm']['xyz']" in xacro_str
+
+
+def test_xacro_serializer_serialize_fixed_joint_transform_override():
+    from onshape2xacro.config import ConfigOverride
+
+    robot = nx.DiGraph()
+    robot.name = "flat_robot"
+    node_a = "link_a"
+    node_b = "link_b"
+    robot.add_node(node_a, data=LinkRecord("link_a", [], [], [], keys=["pA"]))
+    robot.add_node(node_b, data=LinkRecord("link_b", [], [], [], keys=["pB"]))
+
+    joint = JointRecord(
+        "fixed_frame_right_oak",
+        "FIXED",
+        "link_a",
+        "link_b",
+        (0, 0, 1),
+        SimpleNamespace(name="fixed_frame_right_oak"),
+    )
+    robot.add_edge(node_a, node_b, data=joint)
+
+    serializer = XacroSerializer()
+    xacro_str = serializer.serialize(
+        robot,
+        config=ConfigOverride(
+            joint_transforms={"fixed_frame_right_oak": {"xyz": "4 5 6"}}
+        ),
+    )
+
+    assert "'fixed_frame_right_oak': {'xyz': '4 5 6', 'rpy': '0 0 0'}" in xacro_str
+    assert "joint_transforms['fixed_frame_right_oak']['xyz']" in xacro_str
 
 
 def test_xacro_serializer_save_no_download(tmp_path):
@@ -59,6 +123,13 @@ def test_xacro_serializer_save_no_download(tmp_path):
     assert (out / "urdf" / "test_robot.urdf.xacro").exists()
     assert (out / "config" / "joint_limits.yaml").exists()
     assert (out / "config" / "inertials.yaml").exists()
+    assert (out / "config" / "joint_transforms.yaml").exists()
+
+    with open(out / "urdf" / "test_robot.urdf.xacro", "r") as f:
+        content = f.read()
+        assert "joint_transforms_file" in content
+        assert "joint_transforms.yaml" in content
+        assert "joint_transforms_file['joint_transforms']" in content
 
 
 def test_xacro_serializer_subassembly_grouping(tmp_path):
@@ -147,6 +218,78 @@ def test_xacro_joint_types(tmp_path):
         content = f.read()
         assert 'type="prismatic"' in content
         assert 'type="continuous"' in content
+
+
+def test_fixed_joint_origin_uses_joint_transforms(tmp_path):
+    import yaml
+
+    robot = nx.DiGraph()
+    robot.name = "fixed_joint_robot"
+    node_a = "link_a"
+    node_b = "link_b"
+    robot.add_node(node_a, data=LinkRecord("link_a", [], [], [], keys=["pA"]))
+    robot.add_node(node_b, data=LinkRecord("link_b", [], [], [], keys=["pB"]))
+
+    joint = JointRecord(
+        "fixed_frame_right_oak",
+        "FIXED",
+        "link_a",
+        "link_b",
+        (0, 0, 1),
+        SimpleNamespace(name="fixed_frame_right_oak"),
+    )
+    robot.add_edge(node_a, node_b, data=joint)
+
+    serializer = XacroSerializer()
+    out = tmp_path / "output"
+    serializer.save(robot, str(out), download_assets=False)
+
+    with open(out / "config" / "joint_transforms.yaml", "r") as f:
+        data = yaml.safe_load(f)
+        assert "fixed_frame_right_oak" in data["joint_transforms"]
+        assert data["joint_transforms"]["fixed_frame_right_oak"] == {
+            "xyz": "0 0 0",
+            "rpy": "0 0 0",
+        }
+
+    with open(out / "urdf" / "fixed_joint_robot.xacro", "r") as f:
+        content = f.read()
+        assert 'name="${prefix}fixed_frame_right_oak"' in content
+        assert "joint_transforms['fixed_frame_right_oak']['xyz']" in content
+        assert "joint_transforms['fixed_frame_right_oak']['rpy']" in content
+
+
+def test_joint_edge_key_generates_joint_transforms(tmp_path):
+    import yaml
+
+    robot = nx.DiGraph()
+    robot.name = "joint_edge_robot"
+    node_a = "link_a"
+    node_b = "link_b"
+    robot.add_node(node_a, data=LinkRecord("link_a", [], [], [], keys=["pA"]))
+    robot.add_node(node_b, data=LinkRecord("link_b", [], [], [], keys=["pB"]))
+
+    joint = JointRecord(
+        "fixed_frame_right_oak",
+        "FIXED",
+        "link_a",
+        "link_b",
+        (0, 0, 1),
+        SimpleNamespace(name="fixed_frame_right_oak"),
+    )
+    robot.add_edge(node_a, node_b, joint=joint)
+
+    serializer = XacroSerializer()
+    out = tmp_path / "output"
+    serializer.save(robot, str(out), download_assets=False)
+
+    with open(out / "config" / "joint_transforms.yaml", "r") as f:
+        data = yaml.safe_load(f)
+        assert "fixed_frame_right_oak" in data["joint_transforms"]
+
+    with open(out / "urdf" / "joint_edge_robot.xacro", "r") as f:
+        content = f.read()
+        assert "joint_transforms['fixed_frame_right_oak']['xyz']" in content
 
 
 def test_xacro_missing_meshes_prompt(tmp_path):
